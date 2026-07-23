@@ -23,7 +23,7 @@ void exit_logfully(int exit_code)
 int main(int argc, char** argv)
 {
     set_up_logging();
-    if (argc != 2)
+    if (argc != 3)
     {
         syslog(LOG_ERR, "Usage: %s <target_file> <content_string>\n", argv[0]);
         exit_logfully(1);
