@@ -7,5 +7,5 @@ writer: writer.c
 
 .phony: clean
 clean:
-	@rm writer
+	-rm writer
 
