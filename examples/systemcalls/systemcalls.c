@@ -1,4 +1,16 @@
 #include "systemcalls.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <errno.h>
+#include <stdbool.h>
+#include <syslog.h>
+
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 /**
  * @param cmd the command to execute with system()
@@ -16,10 +28,20 @@ bool do_system(const char *cmd)
  *   and return a boolean true if the system() call completed with success
  *   or false() if it returned a failure
 */
+    syslog(LOG_DEBUG, "!!!!!!!! system(\"%s\") called.\n", cmd);
 
-    return true;
+    if (system(cmd))
+    {
+        syslog(LOG_ERR, "Could not call system(\"%s\"): %s",
+                cmd, strerror(errno));
+
+        return false;
+    }
+    else {
+        syslog(LOG_INFO, "system() call succeeded\n");
+        return true;
+    }
 }
-
 /**
 * @param count -The numbers of variables passed to the function. The variables are command to execute.
 *   followed by arguments to pass to the command
@@ -34,23 +56,81 @@ bool do_system(const char *cmd)
 *   by the command issued in @param arguments with the specified arguments.
 */
 
+
+/**
+ * @brief Awaits a child process and waits til it exits. When it does, returns
+ * the return code of that child process.
+ * @param pid The PID of the child process to await
+ * @return The exit code of the child process.
+ */
+int await_child_proc(pid_t pid)
+{
+    int wstatus = 0;
+    while (true)
+    {
+        pid_t child_await_event_pid = 0;
+        if (-1 == (child_await_event_pid = waitpid(pid, &wstatus, 0)))
+        {
+            syslog(LOG_ERR, "Error awaiting child process: %s", strerror(errno));
+            perror("Error awaiting child process");
+        }
+
+        if (child_await_event_pid != pid)
+        {
+            continue;
+        }
+
+        if (WIFEXITED(wstatus))
+        {
+            int return_code = WEXITSTATUS(wstatus);
+            syslog(LOG_INFO, "-> Child process exited with code %d\n", return_code);
+            return return_code;
+        }
+    }
+}
+
+bool do_fork_exec(const char* command, char* args[], int *child_pid)
+{
+    *child_pid = fork();
+    if (*child_pid == 0)
+    {
+        // This is the child process. Exec.
+        execv(command, args);
+        syslog(LOG_ERR, "%s:%d: Something went wrong exec-ing: %s", __func__,
+                __LINE__, strerror(errno));
+        return false;
+    }
+    else if (*child_pid == -1) {
+        syslog(LOG_ERR, "%s:%d: Something went wrong forking: %s", __func__, __LINE__,
+                strerror(errno));
+        return false;
+    }
+    else {
+        // This is the parent process. Await the child until it exits.
+        int exit_code = await_child_proc(*child_pid);
+        return (exit_code == 0);
+    }
+}
+
 bool do_exec(int count, ...)
 {
     va_list args;
     va_start(args, count);
     char * command[count+1];
     int i;
+
+    syslog(LOG_DEBUG, "$$$$$$$$$ do_exec called with following arguments:\n");
+
     for(i=0; i<count; i++)
     {
         command[i] = va_arg(args, char *);
+        syslog(LOG_DEBUG, "- \"%s\"\n", command[i]);
     }
     command[count] = NULL;
     // this line is to avoid a compile warning before your implementation is complete
     // and may be removed
-    command[count] = command[count];
 
 /*
- * TODO:
  *   Execute a system command by calling fork, execv(),
  *   and wait instead of system (see LSP page 161).
  *   Use the command[0] as the full path to the command to execute
@@ -59,9 +139,62 @@ bool do_exec(int count, ...)
  *
 */
 
+    int child_pid = 0;
+    return do_fork_exec(command[0], &command[1], &child_pid);
+
+#if 0
+    pid_t pid = fork();
+    int result = 0;
+    if ((int)pid == 0)
+    {
+        // This is the child. Do the exec here.
+        result = execv(command[0], &command[1]);
+        if (0 == result)
+        {
+            syslog(LOG_INFO, "execv() succeeded.");
+        }
+        else
+        {
+            syslog(LOG_ERR, "execv() failed: %s", strerror(errno));
+            goto cleanup;
+        }
+    }
+    else if ((int)pid < 0 )
+    {
+        // Some error happened.
+        syslog(LOG_ERR, "Could not fork this process to execute command: %s",
+                strerror(errno));
+
+        result = -1;
+        goto cleanup;
+    }
+    else if ((int)pid > 0) {
+        // This is the parent. await the child process's pid
+        syslog(LOG_INFO, "Waiting for child process to exit.");
+        result = await_child_proc(pid);
+    }
+    else {
+        syslog(LOG_CRIT, "Something completely unexpected happened here. "
+                "This branch should never be called.");
+        result = 23;
+
+        // This is an odd enough number to get us to come looking for it.
+        exit(23);
+    }
+
+cleanup:
     va_end(args);
 
-    return true;
+    syslog(LOG_DEBUG, "-------------------------------------------\n"
+            "success? %c\n"
+            "result = %d\n"
+            "-------------------------------------------\n",
+            (result == 0) ? 'Y' : 'N',
+            result
+            );
+
+    return (result == 0);
+#endif
 }
 
 /**
@@ -75,15 +208,91 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
     va_start(args, count);
     char * command[count+1];
     int i;
+    bool did_succeed = false;
+
+    syslog(LOG_DEBUG, "$$$$$$$$$ do_exec_redirect() called with following arguments:\n");
     for(i=0; i<count; i++)
     {
         command[i] = va_arg(args, char *);
+        syslog(LOG_DEBUG, "- \"%s\"\n", command[i]);
     }
     command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
 
+    // Create file to redirect to.
+    int redirect_fd = -1;
+    if (0 > (redirect_fd = open(outputfile, O_WRONLY | O_TRUNC | O_CREAT, 0666)))
+    {
+        syslog(LOG_ERR, "Could not open file '%s' for process redirection: %s",
+                outputfile,
+                strerror(errno));
+        did_succeed = false;
+        goto cleanup;
+    }
+    if (dup2(redirect_fd, 1) < 0)
+    {
+        syslog(LOG_ERR, "Could not dup2 STDOUT: %s", strerror(errno));
+        close(redirect_fd);
+        did_succeed = false;
+        goto cleanup;
+    }
+
+    if (dup2(redirect_fd, 2) < 0)
+    {
+        syslog(LOG_ERR, "Could not dup2 STDERR: %s", strerror(errno));
+        close(redirect_fd);
+        did_succeed = false;
+        goto cleanup;
+    }
+    close(redirect_fd);
+
+    pid_t child_pid = (int)0;
+    do_fork_exec(command[0], &command[1], &child_pid);
+
+#if 0
+    pid_t child_pid = fork();
+    switch ((int)child_pid)
+    {
+        case -1:
+        {
+            syslog(LOG_ERR, "Could not fork: %s",
+                    strerror(errno));
+            did_succeed = false;
+            goto cleanup;
+            break;
+        }
+        case 0:
+        {
+            // This is the child process. Exec that v.
+            close(redirect_fd);
+
+            char **arguments = &command[1];
+            for (size_t i = 0; arguments[i] != NULL; ++i)
+            {
+                syslog(LOG_DEBUG, "Child process: argument %zu is \"%s\"", i, arguments[i]);
+            }
+
+            execv(command[0], &command[1]);
+            syslog(LOG_ERR, "Something went wrong with execv: %s",
+                    strerror(errno));
+            {
+                syslog(LOG_ERR, "Could not execv: %s", strerror(errno));
+                did_succeed = false;
+                goto cleanup;
+            }
+            break;
+        }
+        default: {
+            close(redirect_fd);
+            // Wait for child process to terminate.
+            // TODO: Have to use wait_id to get return code.
+            int result_code = await_child_proc(child_pid);
+            syslog(LOG_INFO, "Child process existed with code %d", result_code);
+
+            did_succeed = (result_code == 0);
+            break;
+        }
+    }
+#endif
 
 /*
  * TODO
@@ -93,7 +302,9 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
  *
 */
 
+cleanup:
     va_end(args);
 
-    return true;
+    syslog(LOG_DEBUG, "execv() success? %c", (did_succeed) ? 'Y' : 'N');
+    return did_succeed;
 }
