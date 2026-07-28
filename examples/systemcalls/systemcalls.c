@@ -69,7 +69,7 @@ int await_child_proc(pid_t pid)
     while (true)
     {
         pid_t child_await_event_pid = 0;
-        if (-1 == (child_await_event_pid = waitpid(pid, &wstatus, 0)))
+        if (-1 == (child_await_event_pid = waitpid(-1, &wstatus, 0)))
         {
             syslog(LOG_ERR, "Error awaiting child process: %s", strerror(errno));
             perror("Error awaiting child process");
@@ -98,7 +98,7 @@ bool do_fork_exec(const char* command, char* args[], int *child_pid)
         execv(command, args);
         syslog(LOG_ERR, "%s:%d: Something went wrong exec-ing: %s", __func__,
                 __LINE__, strerror(errno));
-        return false;
+        exit(EXIT_FAILURE);
     }
     else if (*child_pid == -1) {
         syslog(LOG_ERR, "%s:%d: Something went wrong forking: %s", __func__, __LINE__,
@@ -108,6 +108,7 @@ bool do_fork_exec(const char* command, char* args[], int *child_pid)
     else {
         // This is the parent process. Await the child until it exits.
         int exit_code = await_child_proc(*child_pid);
+        syslog(LOG_DEBUG, "%s: Got return code of %d", __func__, exit_code);
         return (exit_code == 0);
     }
 }
@@ -140,61 +141,11 @@ bool do_exec(int count, ...)
 */
 
     int child_pid = 0;
-    return do_fork_exec(command[0], &command[1], &child_pid);
-
-#if 0
-    pid_t pid = fork();
-    int result = 0;
-    if ((int)pid == 0)
-    {
-        // This is the child. Do the exec here.
-        result = execv(command[0], &command[1]);
-        if (0 == result)
-        {
-            syslog(LOG_INFO, "execv() succeeded.");
-        }
-        else
-        {
-            syslog(LOG_ERR, "execv() failed: %s", strerror(errno));
-            goto cleanup;
-        }
-    }
-    else if ((int)pid < 0 )
-    {
-        // Some error happened.
-        syslog(LOG_ERR, "Could not fork this process to execute command: %s",
-                strerror(errno));
-
-        result = -1;
-        goto cleanup;
-    }
-    else if ((int)pid > 0) {
-        // This is the parent. await the child process's pid
-        syslog(LOG_INFO, "Waiting for child process to exit.");
-        result = await_child_proc(pid);
-    }
-    else {
-        syslog(LOG_CRIT, "Something completely unexpected happened here. "
-                "This branch should never be called.");
-        result = 23;
-
-        // This is an odd enough number to get us to come looking for it.
-        exit(23);
-    }
-
-cleanup:
+    bool did_succeed = do_fork_exec(command[0], command, &child_pid);
     va_end(args);
-
-    syslog(LOG_DEBUG, "-------------------------------------------\n"
-            "success? %c\n"
-            "result = %d\n"
-            "-------------------------------------------\n",
-            (result == 0) ? 'Y' : 'N',
-            result
-            );
-
-    return (result == 0);
-#endif
+    syslog(LOG_INFO, "%s: Succeeded? %c", __func__, (did_succeed)? 'Y' : 'N');
+    syslog(LOG_INFO, "%s: Returning %d", __func__, did_succeed);
+    return did_succeed;
 }
 
 /**
@@ -246,62 +197,7 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
     close(redirect_fd);
 
     pid_t child_pid = (int)0;
-    do_fork_exec(command[0], &command[1], &child_pid);
-
-#if 0
-    pid_t child_pid = fork();
-    switch ((int)child_pid)
-    {
-        case -1:
-        {
-            syslog(LOG_ERR, "Could not fork: %s",
-                    strerror(errno));
-            did_succeed = false;
-            goto cleanup;
-            break;
-        }
-        case 0:
-        {
-            // This is the child process. Exec that v.
-            close(redirect_fd);
-
-            char **arguments = &command[1];
-            for (size_t i = 0; arguments[i] != NULL; ++i)
-            {
-                syslog(LOG_DEBUG, "Child process: argument %zu is \"%s\"", i, arguments[i]);
-            }
-
-            execv(command[0], &command[1]);
-            syslog(LOG_ERR, "Something went wrong with execv: %s",
-                    strerror(errno));
-            {
-                syslog(LOG_ERR, "Could not execv: %s", strerror(errno));
-                did_succeed = false;
-                goto cleanup;
-            }
-            break;
-        }
-        default: {
-            close(redirect_fd);
-            // Wait for child process to terminate.
-            // TODO: Have to use wait_id to get return code.
-            int result_code = await_child_proc(child_pid);
-            syslog(LOG_INFO, "Child process existed with code %d", result_code);
-
-            did_succeed = (result_code == 0);
-            break;
-        }
-    }
-#endif
-
-/*
- * TODO
- *   Call execv, but first using https://stackoverflow.com/a/13784315/1446624 as a refernce,
- *   redirect standard out to a file specified by outputfile.
- *   The rest of the behaviour is same as do_exec()
- *
-*/
-
+    did_succeed = do_fork_exec(command[0], command, &child_pid);
 cleanup:
     va_end(args);
 
