@@ -39,6 +39,7 @@ echo "Using directory ${OUTDIR} for output"
 
 mkdir -p ${OUTDIR}
 
+cp "$(realpath "$GITROOT")/kernel-lite-config" "$OUTDIR/linux-stable/.config"
 cd "$OUTDIR"
 if [ ! -d "${OUTDIR}/linux-stable" ]; then
     #Clone only if the repository does not exist.
@@ -101,9 +102,11 @@ done
 cd "$OUTDIR"
 if [ ! -d "${OUTDIR}/busybox" ]
 then
+    echo "-> Cloning busybox"
     git clone git://busybox.net/busybox.git
     git checkout ${BUSYBOX_VERSION}
-    # TODO:  Configure busybox
+else
+    echo "-> busybox dir already exists. Continuing."
 fi
 cd busybox
 
@@ -144,14 +147,15 @@ make -C "$GITROOT/finder-app" ARCH="$ARCH" CROSS_COMPILE="$CROSS_COMPILE"
 # TODO: Copy the finder related scripts and executables to the /home directory
 # on the target rootfs
 echo "-> Installing finder app files to rootfs"
-install --mode +x -D \
+install --mode +x \
     "$GITROOT/finder-app/finder.sh" \
     "$GITROOT/finder-app/writer.sh" \
     "$GITROOT/finder-app/writer" \
     "$GITROOT/finder-app/autorun-qemu.sh" \
-    "$GITROOT/conf" \
     "$GITROOT/finder-app/finder-test.sh" \
     "$OUTDIR/rootfs/home"
+
+cp -r "$GITROOT/conf" "$OUTDIR/rootfs/home"
 
 # TODO: Chown the root directory
 sudo chown -R root:root "$OUTDIR/rootfs"
