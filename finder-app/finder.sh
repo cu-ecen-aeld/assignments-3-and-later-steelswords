@@ -52,6 +52,6 @@ for f in "$filesdir"/** ; do
     [ -e "$f" ] && num_files=$(( num_files + 1 ))
 done
 
-num_line_matches=$(grep -R "$searchstr" "$filesdir" | wc --lines - )
+num_line_matches=$(grep -R "$searchstr" "$filesdir" | wc -l - )
 
 echo "The number of files are $num_files and the number of matching lines are $num_line_matches"
