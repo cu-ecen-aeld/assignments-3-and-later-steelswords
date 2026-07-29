@@ -144,10 +144,12 @@ make -C "$GITROOT/finder-app" ARCH="$ARCH" CROSS_COMPILE="$CROSS_COMPILE"
 # TODO: Copy the finder related scripts and executables to the /home directory
 # on the target rootfs
 echo "-> Installing finder app files to rootfs"
-install --mode +x \
+install --mode +x -D \
     "$GITROOT/finder-app/finder.sh" \
     "$GITROOT/finder-app/writer.sh" \
     "$GITROOT/finder-app/writer" \
+    "$GITROOT/finder-app/autorun-qemu.sh" \
+    "$GITROOT/conf" \
     "$GITROOT/finder-app/finder-test.sh" \
     "$OUTDIR/rootfs/home"
 
