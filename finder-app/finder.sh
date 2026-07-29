@@ -9,8 +9,6 @@ set -o errexit   # Abort on nonzero exitstatus
 set -o nounset   # Abort on unbound variable
 set -o pipefail  # Don't hide errors within pipes
 
-trap "echo 'An error occurred! Quitting mid-script!'" ERR
-
 # Uncomment to debug
 
 ################################################################################
@@ -39,7 +37,7 @@ if [ ! -d "$filesdir" ]; then
 fi
 
 searchstr="${2:-}"
-if [[ ! -v searchstr ]]; then
+if [[ -z searchstr ]]; then
     print_usage
     exit 1
 fi

@@ -39,7 +39,6 @@ echo "Using directory ${OUTDIR} for output"
 
 mkdir -p ${OUTDIR}
 
-cp "$(realpath "$GITROOT")/kernel-lite-config" "$OUTDIR/linux-stable/.config"
 cd "$OUTDIR"
 if [ ! -d "${OUTDIR}/linux-stable" ]; then
     #Clone only if the repository does not exist.
@@ -53,7 +52,7 @@ if [ ! -e ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ]; then
 
     # TODO: Add your kernel build steps here
     #make ARCH="$ARCH" CROSS_COMPILE="$CROSS_COMPILE" HOSTCFLAGS="$HOSTFLAGS" defconfig
-    cp "$(realpath "$GITROOT")/kernel-lite-config" "$OUTDIR/linux-stable"
+    cp "$(realpath "$GITROOT")/kernel-lite-config" "$OUTDIR/linux-stable/.config"
     make ARCH="$ARCH" CROSS_COMPILE="$CROSS_COMPILE" HOSTCFLAGS="$HOSTFLAGS" all -j "$NUM_JOBS"
     make ARCH="$ARCH" CROSS_COMPILE="$CROSS_COMPILE" HOSTCFLAGS="$HOSTFLAGS" modules -j "$NUM_JOBS"
     make ARCH="$ARCH" CROSS_COMPILE="$CROSS_COMPILE" HOSTCFLAGS="$HOSTFLAGS" dtbs -j "$NUM_JOBS"
@@ -103,8 +102,9 @@ cd "$OUTDIR"
 if [ ! -d "${OUTDIR}/busybox" ]
 then
     echo "-> Cloning busybox"
-    git clone git://busybox.net/busybox.git
-    git checkout ${BUSYBOX_VERSION}
+    git clone git://busybox.net/busybox.git busybox
+    echo "-> Checking out busybox version ${BUSYBOX_VERSION}"
+    git -C busybox checkout ${BUSYBOX_VERSION}
 else
     echo "-> busybox dir already exists. Continuing."
 fi
@@ -138,6 +138,7 @@ cp --archive "$SYSROOT/lib64" "$OUTDIR/rootfs"
 cd "$OUTDIR/rootfs"
 sudo mknod -m 666 dev/null c 1 3
 sudo mknod -m 666 dev/console c 5 1
+sudo mknod -m 666 dev/ttyAMA0 c 5 1
 
 # TODO: Clean and build the writer utility
 make -C "$GITROOT/finder-app" ARCH="$ARCH" CROSS_COMPILE="$CROSS_COMPILE" clean
