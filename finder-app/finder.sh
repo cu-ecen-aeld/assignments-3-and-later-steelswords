@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env sh
 # File:        finder.sh
 # Author:      Tristan Andrus
 # Description: Finds the number of files in a given directory, and the number of
