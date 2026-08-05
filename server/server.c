@@ -236,15 +236,23 @@ int handle_connection(int sockfd, int diskfd)
 {
     ssize_t total_bytes_read = 0;
     ssize_t this_round_bytes_read = 0;
-    char *buf = calloc(MAX_BUF_SIZE, sizeof(char));
-    //char *leftovers_buf = calloc(MAX_BUF_SIZE, sizeof(char));
+    size_t buf_size = MAX_BUF_SIZE;
+    char *buf = calloc(buf_size + 1, sizeof(char));
 
-    while(-1 != (this_round_bytes_read = recv(sockfd, (void*)buf, MAX_BUF_SIZE, 0)))
+    while(-1 != (this_round_bytes_read = recv(sockfd, (void*)buf, buf_size, 0)))
     {
         if (0 == this_round_bytes_read)
         {
             printf("-> Socket closed.\n");
             break;
+        }
+        else if (buf_size == this_round_bytes_read)
+        {
+            size_t new_buf_size = buf_size * 2;
+            buf = realloc(buf, new_buf_size);
+            // Clear out all that uninitialized memory
+            memset(&buf[buf_size], 0, buf_size);
+            buf_size = new_buf_size;
         }
 
         printf("-> Data recvd:\n-----------------------\n"
@@ -257,6 +265,7 @@ int handle_connection(int sockfd, int diskfd)
 
         char* token = NULL;
         char* search_str = buf;
+        size_t tokens_extracted = 0;
         for(char* token = NULL; ; search_str = NULL)
         {
             token = strtok_r(search_str, "\n", &save_ptr);
@@ -264,23 +273,36 @@ int handle_connection(int sockfd, int diskfd)
                 break;
             else
             {
-
+                tokens_extracted++;
                 printf("=> Token found");
                 printf("==> Packet:[");
                 print_all(token);
                 printf("]\n");
                 size_t token_len = strlen(token);
-                bytes_processed += token_len;
+                bytes_processed += token_len + 1; // +1 for newline, which got turned into '\0'
                 handle_packet(sockfd, diskfd, token, token_len);
-
             }
         }
 
-        free(buf);
-        buf = malloc(MAX_BUF_SIZE);
+
+        if (this_round_bytes_read >= MAX_BUF_SIZE)
+        {
+            size_t new_buf_size = buf_size * 2;
+            buf = realloc(buf, new_buf_size + 1);
+            // Clear out all that uninitialized memory
+            memset(&buf[buf_size], 0, buf_size + 1);
+            buf_size = new_buf_size;
+        }
+        else {
+            // If there is left over data, resize and keep the buffer.
+            char* residue = calloc(buf_size + 1, sizeof(char));
+            strncpy(residue, &buf[bytes_processed], buf_size - bytes_processed);
+            free(buf);
+            buf = calloc(buf_size + 1, sizeof(char));
+            strncpy(buf, residue, buf_size - bytes_processed);
+        }
     }
     free(buf);
-    //free(leftovers_buf);
     fsync(diskfd);
     return 0;
 }
