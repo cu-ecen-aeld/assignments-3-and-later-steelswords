@@ -227,6 +227,8 @@ void handle_packet(int sockfd, int diskfd, char* msg, size_t len)
 {
     printf("-> Handling packet of size %zu: \"%s\"\n", len, msg);
     write_all(diskfd, msg, len);
+    char newline[1] = "\n";
+    write_all(diskfd, newline, 1);
     spit_file_back_out_to_socket(sockfd, diskfd);
 }
 
@@ -234,8 +236,8 @@ int handle_connection(int sockfd, int diskfd)
 {
     ssize_t total_bytes_read = 0;
     ssize_t this_round_bytes_read = 0;
-    char *buf = malloc(MAX_BUF_SIZE);
-    char *leftovers_buf = malloc(MAX_BUF_SIZE);
+    char *buf = calloc(MAX_BUF_SIZE, sizeof(char));
+    //char *leftovers_buf = calloc(MAX_BUF_SIZE, sizeof(char));
 
     while(-1 != (this_round_bytes_read = recv(sockfd, (void*)buf, MAX_BUF_SIZE, 0)))
     {
@@ -278,7 +280,7 @@ int handle_connection(int sockfd, int diskfd)
         buf = malloc(MAX_BUF_SIZE);
     }
     free(buf);
-    free(leftovers_buf);
+    //free(leftovers_buf);
     fsync(diskfd);
     return 0;
 }
