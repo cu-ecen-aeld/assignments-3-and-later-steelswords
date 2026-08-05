@@ -103,6 +103,7 @@ int handle_connection(int sockfd)
     free(buf);
     fsync(diskfd);
     close(diskfd);
+    return 0;
 }
 
 int main(int argc, char** argv)
