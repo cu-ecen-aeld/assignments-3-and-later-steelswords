@@ -2,7 +2,7 @@ CC="${CROSS_COMPILE}gcc"
 CXX="${CROSS_COMPILE}g++"
 LINKER="${CROSS_COMPILE}gcc"
 LDFLAGS := -pthread $(LDFLAGS)
-CCFLAGS := -I. $(CCFLAGS)
+CCFLAGS := -g -I. $(CCFLAGS)
 
 OBJDIR := obj
 
