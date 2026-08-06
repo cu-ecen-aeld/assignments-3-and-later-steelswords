@@ -394,6 +394,9 @@ int main(int argc, char** argv)
         char client_ip_address[INET6_ADDRSTRLEN] = {0};
         get_client_ip_address(connection_socket_fd, client_ip_address);
 
+        syslog(LOG_INFO, "Accepted connection from %s", client_ip_address);
+        printf(" * Accepted connection from %s\n", client_ip_address);
+
         // I don't think we need to deal with concurrent socket connections here,
         // at least the way I read the assignment requirements. So we will just
         // handle one at a time. The unit test will likely not do more than SOMAXCONN
