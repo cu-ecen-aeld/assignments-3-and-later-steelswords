@@ -186,9 +186,7 @@ void handle_packet(int sockfd, int diskfd, char* msg, size_t len)
 char* read_until_stop_condition(int sockfd, int diskfd, size_t *len)
 {
     const size_t buf_chunk_size = 1024;
-    ssize_t bytes_read = 0;
     ssize_t n = 0; // Bytes read this go-around.
-    bool keep_receiving = true;
     size_t index = 0;
     *len = buf_chunk_size;
     char* buf = calloc(*len, sizeof(char));
@@ -252,9 +250,6 @@ char* read_until_stop_condition(int sockfd, int diskfd, size_t *len)
                 //printf("-> Handling packet: [%s]\n", packet);
                 handle_packet(sockfd, diskfd, packet, strlen(packet));
                 free(packet);
-
-                // TODO: The requirements here are murky. Might have to remove this.
-                keep_receiving = false;
             }
             return buf;
         }
@@ -265,15 +260,11 @@ char* read_until_stop_condition(int sockfd, int diskfd, size_t *len)
 
 int handle_connection(int sockfd, int diskfd)
 {
-    ssize_t this_round_bytes_read = 0;
     size_t buf_size = MAX_BUF_SIZE;
-    size_t index = 0; // This marks where recv is supposed to put data. It is also the total bytes read.
-    bool received_full_token = false;
 
     char* full_msg = read_until_stop_condition(sockfd, diskfd, &buf_size);
     extract_token_and_consolidate_buffer(full_msg, buf_size);
     free(full_msg);
-
 
     return 0;
 }
@@ -287,17 +278,14 @@ void get_client_ip_address(int client_sockfd, char* out_result)
     // First, get the sockaddr info about the client peer.
     socklen_t len = sizeof (struct sockaddr_storage);
     struct sockaddr_storage addr;
-    int port;
     getpeername(client_sockfd, (struct sockaddr*)&addr, &len);
 
     if (AF_INET == addr.ss_family)
     {
         struct sockaddr_in *sockinfo = (struct sockaddr_in *)&addr;
-        port = ntohs(sockinfo->sin_port);
         inet_ntop(AF_INET, &sockinfo->sin_addr, out_result, INET6_ADDRSTRLEN);
     } else { // IPv6
         struct sockaddr_in6 *sockinfo = (struct sockaddr_in6 *)&addr;
-        port = ntohs(sockinfo->sin6_port);
         inet_ntop(AF_INET6, &sockinfo->sin6_addr, out_result, INET6_ADDRSTRLEN);
     }
 }

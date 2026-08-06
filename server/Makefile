@@ -2,7 +2,7 @@ CC="${CROSS_COMPILE}gcc"
 CXX="${CROSS_COMPILE}g++"
 LINKER="${CROSS_COMPILE}gcc"
 LDFLAGS := -pthread $(LDFLAGS)
-CCFLAGS := -g -I. $(CCFLAGS)
+CFLAGS := -g -I. $(CFLAGS) -Wall -Werror -Wpedantic
 
 OBJDIR := obj
 
@@ -15,14 +15,14 @@ OBJS := $(patsubst %.c,$(OBJDIR)/%.o, $(SRCS))
 
 $(OBJDIR)/%.o: %.c
 	mkdir -p $(dir $@)
-	$(CC) $(CCFLAGS) -o $@ -c $<
+	$(CC) $(CFLAGS) -o $@ -c $<
 
 signal_handle.o: signal_handle.c signal_handle.h
 	mkdir -p $(dir $@)
-	$(CC) $(CCFLAGS) -o $@ -c $^
+	$(CC) $(CFLAGS) -o $@ -c $^
 
 aesdsocket: $(OBJS)
-	$(CC) -o $@ $(LDFLAGS) $(CCFLAGS) $^
+	$(CC) -o $@ $(LDFLAGS) $(CFLAGS) $^
 
 .phony: clean
 clean:
