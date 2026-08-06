@@ -116,40 +116,6 @@ int duplicate_data_across_fds(int input_fd, int output_fd)
     return 0;
 }
 
-void print_all(const char* msg)
-{
-    size_t len = strlen(msg);
-
-    size_t num_newlines = 0;
-    for (size_t i = 0; i < len; ++i)
-    {
-        if (msg[i] == '\n')
-        {
-            num_newlines++;
-        }
-    }
-
-    size_t new_len = len + num_newlines;
-
-    char* result = calloc(len, sizeof(char));
-
-
-    for(size_t i = 0, j = 0; i < len; ++i, ++j)
-    {
-        if(msg[i] == '\n')
-        {
-            result[j++] = '\\';
-            result[j] = 'n';
-        }
-        else {
-            result[j] = msg[i];
-        }
-    }
-
-    printf("->>%s<<-", result);
-    free(result);
-}
-
 void spit_file_back_out_to_socket(int sockfd, int diskfd)
 {
     // Rewind to beginning of file
@@ -334,29 +300,6 @@ void get_client_ip_address(int client_sockfd, char* out_result)
         port = ntohs(sockinfo->sin6_port);
         inet_ntop(AF_INET6, &sockinfo->sin6_addr, out_result, INET6_ADDRSTRLEN);
     }
-
-#if 0
-    struct in_addr *src = (struct in_addr*)client_addr;
-    const char* res = NULL;
-    if (client_addr->sa_family == AF_INET)
-    {
-        res = inet_ntop(AF_INET, &(src->s_addr), out_result, INET_ADDRSTRLEN);
-    }
-    else if (client_addr->sa_family == AF_INET6)
-    {
-        res = inet_ntop(AF_INET6, &(src->s_addr), out_result, INET6_ADDRSTRLEN);
-    }
-    else {
-        fprintf(stderr, "Unknown AF family.");
-        res = NULL;
-    }
-
-    if (res == NULL)
-    {
-        log_error("Could not resolve client address");
-        strcpy(out_result, "unknown");
-    }
-#endif
 }
 
 
@@ -450,29 +393,7 @@ int main(int argc, char** argv)
 
         char client_ip_address[INET6_ADDRSTRLEN] = {0};
         get_client_ip_address(connection_socket_fd, client_ip_address);
-#if 0
-        // Get the IP address of the client
-        char client_ip_address[INET6_ADDRSTRLEN] = {0};
-        struct sockaddr client_sock_addr;
-        if (0 != getpeername(connection_socket_fd, &client_sock_addr, &ip_address_len))
-        {
-            log_error("Could not resolve client ipv4 address.");
-            sprintf(client_ip_address, "unknown");
-        }
-        if (NULL == inet_ntop(AF_INET, &client_sock_addr, client_ip_address, ip_address_len))
-        {
-            log_error("Could not resolve client IPv4 address");
-            sprintf(client_ip_address, "unknown");
-        }
-        if (-1 == connection_socket_fd)
-        {
-            log_error("Could not accept connection");
-        }
-        else {
-            syslog(LOG_INFO, "Accepted connection from %s", client_ip_address);
-            printf(" * Accepted connection from %s\n", client_ip_address);
-        }
-#endif
+
         // I don't think we need to deal with concurrent socket connections here,
         // at least the way I read the assignment requirements. So we will just
         // handle one at a time. The unit test will likely not do more than SOMAXCONN
