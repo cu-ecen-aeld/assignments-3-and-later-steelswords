@@ -169,59 +169,12 @@ void spit_file_back_out_to_socket(int sockfd, int diskfd)
 
     duplicate_data_across_fds(diskfd, sockfd);
 
-#if 0
-    ssize_t bytes_read = 0;
-    while (get_run_flag() == 1) {
-        const size_t buf_size = 2048;
-        char *buf = calloc(buf_size, sizeof(char));
-        ssize_t this_round_bytes_read = read(diskfd, (void*)buf, buf_size);
-        if (this_round_bytes_read <= -1)
-        {
-            log_error("Could not read back from file");
-            exit(14);
-        }
-        else if (0 == this_round_bytes_read)
-        {
-            printf("Finished reading from file.\n");
-
-            free(buf);
-            break;
-        }
-
-        free(buf);
-    }
-#endif
-
     if (-1 == lseek(diskfd, 0, SEEK_END))
     {
         log_error("Could not reset file position to end");
         exit(15);
     }
 }
-
-#if 0
-// Each time this is called, it will return the first packet in its internally-managed
-// buffer. It returns NULL when there is no packet available. (Read: there is no newline
-// character)
-char* extract_packets(int sockfd, char *new_data, size_t *new_data_len)
-{
-    static size_t buf_size = 1024;
-    static size_t buf_index = 0;
-    const size_t size_increment = 1024;
-    static char* longterm_buf = calloc(buf_size, sizeof(char));
-
-    // First, check if there is a newline in the new_data.
-
-    
-    // Size up to accomodate large messages
-    while (buf_size <  new_data_len)
-    {
-        longterm_buf = realloc(longterm_buf, buf_size + size_increment);
-        buf_size += size_increment;
-    }
-
-}
-#endif
 
 /** Like strtok, but it manually rearranges the buffer when a token is found, and scootches
  * the remaining contents to the beginning of the buffer. Can be called many times on the same  */
@@ -355,94 +308,8 @@ int handle_connection(int sockfd, int diskfd)
     size_t index = 0; // This marks where recv is supposed to put data. It is also the total bytes read.
     bool received_full_token = false;
 
-#if 1
     char* full_msg = read_until_stop_condition(sockfd, diskfd, &buf_size);
     extract_token_and_consolidate_buffer(full_msg, buf_size);
-#else
-
-    while(!received_full_token)
-    {
-        this_round_bytes_read = recv(sockfd, (void*)(&buf[index]), buf_size - index, 0);
-        if (0 == this_round_bytes_read)
-        {
-            //// If we're still waiting for a '\n', keep waiting.
-            //for (size_t i = 0; i < buf_size; ++i)
-            //{
-            //    if (buf[i] == '\n')
-            //    {
-            //        received_full_token = true;
-            //        break;
-            //    }
-            //}
-            if (received_full_token) break;
-            else continue;
-            //printf("-> Socket closed.\n");
-        }
-        else if (buf_size == this_round_bytes_read)
-        {
-            size_t new_buf_size = buf_size * 2;
-            buf = realloc(buf, new_buf_size);
-            // Clear out all that uninitialized memory
-            memset(&buf[buf_size], 0, buf_size);
-            buf_size = new_buf_size;
-            continue;
-        }
-
-#if 0
-        printf("-> Data recvd:\n-----------------------\n"
-                "%s\n"
-                "-----------------------\n",
-            buf);
-#endif
-
-        size_t bytes_processed = 0;
-        char* save_ptr = NULL;
-
-
-#if 0
-        // I think this is redundant
-        if (this_round_bytes_read >= MAX_BUF_SIZE)
-        {
-            printf("----> Recvd max buf size, resizing\n");
-            size_t new_buf_size = buf_size + MAX_BUF_SIZE;
-            buf = realloc(buf, new_buf_size + 1);
-            // Clear out all that uninitialized memory
-            memset(&buf[buf_size], 0, buf_size + 1);
-            buf_size = new_buf_size;
-        }
-#endif
-        char* token = NULL;
-        char* search_str = buf;
-        size_t tokens_extracted = 0;
-        for(char* token = NULL; ; search_str = NULL)
-        {
-            token = strtok_r(search_str, "\n", &save_ptr);
-            if (NULL == token)
-                break;
-            else
-            {
-                tokens_extracted++;
-                printf("=> Token found\n");
-                printf("==> Packet:[");
-                //print_all(token);
-                printf("%s", token);
-                printf("]\n");
-                size_t token_len = strlen(token);
-                bytes_processed += token_len + 1; // +1 for newline, which got turned into '\0'
-                handle_packet(sockfd, diskfd, token, token_len);
-            }
-        }
-
-        // If there is left over data, resize and keep the buffer.
-        char* residue = calloc(buf_size + 1, sizeof(char));
-        strncpy(residue, &buf[bytes_processed], buf_size - bytes_processed);
-        free(buf);
-        buf = calloc(buf_size + 1, sizeof(char));
-        strncpy(buf, residue, buf_size - bytes_processed);
-    }
-    //free(buf);
-    fsync(diskfd);
-#endif
     return 0;
 }
 
@@ -520,4 +387,3 @@ int main(int argc, char** argv)
     close(diskfd);
     printf("-> Exiting.\n");
 }
-
