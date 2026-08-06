@@ -223,6 +223,44 @@ char* extract_packets(int sockfd, char *new_data, size_t *new_data_len)
 }
 #endif
 
+/** Like strtok, but it manually rearranges the buffer when a token is found, and scootches
+ * the remaining contents to the beginning of the buffer. Can be called many times on the same  */
+char* extract_token_and_consolidate_buffer(char *buf, size_t len)
+{
+    printf("-> Checking for newlines in recevied messages.\n");
+    for (size_t i = 0; i < len; ++i)
+    {
+        //printf("%02x ", buf[i]);
+        //if (i % 16 == 0) printf("\n");
+        if (buf[i] == '\n')
+        {
+            printf("--> Found newline @ i = %zu (len = %zu)\n", i, len);
+            // That's a token!
+            // Chop it off there.
+            buf[i] = '\0';
+            // Copy it to a malloced string.
+            char *result = calloc(i + 1, sizeof(char));
+            if (result == NULL)
+            {
+                log_error("Cannot allocate more memory");
+                return NULL;
+            }
+            strncpy(result, buf, i+1);
+
+            // Scootch the beginning of unused data to the front of the buffer.
+            i++; // Skip the null terminator of the last string.
+            for (size_t j = 0; i < len; ++j, ++i)
+            {
+                buf[j] = buf[i];
+            }
+
+            // Now consolidate buf.
+            return result;
+        }
+    }
+    return NULL;
+}
+
 void handle_packet(int sockfd, int diskfd, char* msg, size_t len)
 {
     printf("-> Handling packet of size %zu: \"%s\"\n", len, msg);
@@ -232,20 +270,113 @@ void handle_packet(int sockfd, int diskfd, char* msg, size_t len)
     spit_file_back_out_to_socket(sockfd, diskfd);
 }
 
+char* read_until_stop_condition(int sockfd, int diskfd, size_t *len)
+{
+    const size_t buf_chunk_size = 1024;
+    ssize_t bytes_read = 0;
+    ssize_t n = 0; // Bytes read this go-around.
+    bool keep_receiving = true;
+    size_t index = 0;
+    *len = buf_chunk_size;
+    char* buf = calloc(*len, sizeof(char));
+    if (NULL == buf)
+    {
+        log_error("Cannot allocate mem for buffer");
+        exit(-1);
+    }
+
+    while (true)
+    {
+        n = recv(sockfd, &buf[index], buf_chunk_size, 0);
+        printf(" * Recved %zu bytes\n", n);
+        if (n == buf_chunk_size)
+        {
+            index += n;
+            // Resize.
+            buf = realloc(buf, *len + buf_chunk_size);
+            *len += buf_chunk_size;
+            printf("-> Resized buffer to be %zu\n", *len);
+            if (!buf)
+            {
+                log_error("Cannot resize buffer");
+                exit(-1);
+            }
+            // Set the new bytes to 0.
+            memset(&buf[index], 0, buf_chunk_size);
+        }
+        else if (n == -1)
+        {
+            log_error("Could not recv from socket");
+            return NULL;
+        }
+        else if (n == 0)
+        {
+            // Socket performed an orderly shutdown.
+            printf("-> Socket shut down in an orderly way.\n");
+            return buf;
+        }
+        else
+        {
+            if (n + index >= *len)
+            {
+                index += n;
+                // Resize.
+                buf = realloc(buf, *len + buf_chunk_size);
+                *len += buf_chunk_size;
+                printf("-> Resized buffer to be %zu\n", *len);
+                if (!buf)
+                {
+                    log_error("Cannot resize buffer");
+                    exit(-1);
+                }
+                // Set the new bytes to 0.
+                memset(&buf[index], 0, buf_chunk_size);
+
+            }
+            char *packet = NULL;
+            while (NULL != (packet = extract_token_and_consolidate_buffer(buf, *len))) 
+            {
+                printf("-> Handling packet: [%s]\n", packet);
+                handle_packet(sockfd, diskfd, packet, strlen(packet));
+
+                // TODO: The requirements here are murky. Might have to remove this.
+                keep_receiving = false;
+            }
+            return buf;
+        }
+    }
+}
+
 int handle_connection(int sockfd, int diskfd)
 {
-    ssize_t total_bytes_read = 0;
     ssize_t this_round_bytes_read = 0;
     size_t buf_size = MAX_BUF_SIZE;
-    char *buf = calloc(buf_size + 1, sizeof(char));
+    char *buf = calloc(buf_size + 1, sizeof(char)); // This is the pointer to the malloced block
+    size_t index = 0; // This marks where recv is supposed to put data. It is also the total bytes read.
+    bool received_full_token = false;
 
-    // Recv as much as you can here.
-    while(-1 != (this_round_bytes_read = recv(sockfd, (void*)buf, buf_size, 0)))
+#if 1
+    char* full_msg = read_until_stop_condition(sockfd, diskfd, &buf_size);
+    extract_token_and_consolidate_buffer(full_msg, buf_size);
+#else
+
+    while(!received_full_token)
     {
+        this_round_bytes_read = recv(sockfd, (void*)(&buf[index]), buf_size - index, 0);
         if (0 == this_round_bytes_read)
         {
-            printf("-> Socket closed.\n");
-            break;
+            //// If we're still waiting for a '\n', keep waiting.
+            //for (size_t i = 0; i < buf_size; ++i)
+            //{
+            //    if (buf[i] == '\n')
+            //    {
+            //        received_full_token = true;
+            //        break;
+            //    }
+            //}
+            if (received_full_token) break;
+            else continue;
+            //printf("-> Socket closed.\n");
         }
         else if (buf_size == this_round_bytes_read)
         {
@@ -257,10 +388,12 @@ int handle_connection(int sockfd, int diskfd)
             continue;
         }
 
+#if 0
         printf("-> Data recvd:\n-----------------------\n"
                 "%s\n"
                 "-----------------------\n",
             buf);
+#endif
 
         size_t bytes_processed = 0;
         char* save_ptr = NULL;
@@ -309,6 +442,7 @@ int handle_connection(int sockfd, int diskfd)
     }
     //free(buf);
     fsync(diskfd);
+#endif
     return 0;
 }
 
