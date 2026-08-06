@@ -11,7 +11,10 @@
 #include <semaphore.h>
 #include <errno.h>
 #include <stdlib.h>
-#include "signal_handle.h"
+#include <stdbool.h>
+#include <signal.h>
+#include <arpa/inet.h>
+//#include "signal_handle.h"
 
 // We need at least C11 to use stdatomic.h
 #ifndef __STDC_VERSION__
@@ -24,6 +27,69 @@
 
 #define MAX_BUF_SIZE (4 * 1024)
 
+/** Flag cleared by sigint and sigterm handler. When it clears, we don't do another
+ * loop of listen(), accept(), etc: We clean up and terminate. */
+static atomic_bool *_run_flag;
+
+/** This flag indicates we are in a blocked state waiting for listen() or accept()
+ * to complete. */
+static atomic_bool *_is_listening_flag;
+
+int init_run_flag()
+{
+    _run_flag = malloc(sizeof(atomic_bool));
+    _is_listening_flag = malloc(sizeof(atomic_bool));
+    atomic_init(_run_flag, true);
+    atomic_store(_run_flag, true);
+    atomic_init(_is_listening_flag, false);
+    return 0;
+}
+
+int get_run_flag()
+{
+    return atomic_load(_run_flag);
+}
+
+
+int set_run_flag(bool flag_value)
+{
+    atomic_store(_run_flag, flag_value);
+    return 0;
+}
+
+void signal_handler(int signo)
+{
+    if (signo == SIGINT || signo == SIGTERM)
+    {
+        syslog(LOG_WARNING, "Caught signal, exiting");
+        printf("-> Caught signal, exiting.\n");
+
+        if (atomic_load(_is_listening_flag)) {
+            printf("-> Removing /var/tmp/aesdsocketdata\n");
+            if (0 != remove("/var/tmp/aesdsocketdata"))
+            {
+                fprintf(stderr, "Could not remove /var/tmp/aesdsocketdata\n");
+            }
+            _exit(EXIT_SUCCESS);
+            kill(getpid(), SIGKILL);
+        }
+
+        // Mask all other signals so we can clean up safely
+        // TODO
+
+
+        set_run_flag(false);
+        printf("-> Returning from signal handler\n");
+    }
+}
+
+void set_up_signals()
+{
+    if (SIG_ERR == signal(SIGINT, signal_handler))
+        syslog(LOG_ERR, "Could not set up handler for SIGINT");
+    if (SIG_ERR == signal(SIGTERM, signal_handler))
+        syslog(LOG_ERR, "Could not set up handler for SIGINT");
+}
 void log_error(const char *msg)
 {
     char *errno_reason = strerror(errno);
@@ -216,7 +282,8 @@ char* extract_token_and_consolidate_buffer(char *buf, size_t len)
 
 void handle_packet(int sockfd, int diskfd, char* msg, size_t len)
 {
-    printf("-> Handling packet of size %zu: \"%s\"\n", len, msg);
+    //printf("-> Handling packet of size %zu: \"%s\"\n", len, msg);
+    printf("-> Handling packet of size %zu\n", len);
     write_all(diskfd, msg, len);
     char newline[1] = "\n";
     write_all(diskfd, newline, 1);
@@ -289,7 +356,7 @@ char* read_until_stop_condition(int sockfd, int diskfd, size_t *len)
             char *packet = NULL;
             while (NULL != (packet = extract_token_and_consolidate_buffer(buf, *len))) 
             {
-                printf("-> Handling packet: [%s]\n", packet);
+                //printf("-> Handling packet: [%s]\n", packet);
                 handle_packet(sockfd, diskfd, packet, strlen(packet));
 
                 // TODO: The requirements here are murky. Might have to remove this.
@@ -310,14 +377,67 @@ int handle_connection(int sockfd, int diskfd)
 
     char* full_msg = read_until_stop_condition(sockfd, diskfd, &buf_size);
     extract_token_and_consolidate_buffer(full_msg, buf_size);
+
     return 0;
+}
+
+//void get_client_ip_address(int client_sockfd, struct sockaddr *client_addr, char* out_result)
+// Based on example code from Beej's Guide
+// out_result is allocated on the caller's side. It must be at least INET6_ADDRSTRLEN chars long.
+void get_client_ip_address(int client_sockfd, char* out_result)
+{
+    strcpy(out_result, "unknown");
+    // First, get the sockaddr info about the client peer.
+    socklen_t len = sizeof (struct sockaddr_storage);
+    struct sockaddr_storage addr;
+    int port;
+    getpeername(client_sockfd, (struct sockaddr*)&addr, &len);
+
+    if (AF_INET == addr.ss_family)
+    {
+        struct sockaddr_in *sockinfo = (struct sockaddr_in *)&addr;
+        port = ntohs(sockinfo->sin_port);
+        inet_ntop(AF_INET, &sockinfo->sin_addr, out_result, INET6_ADDRSTRLEN);
+    } else { // IPv6
+        struct sockaddr_in6 *sockinfo = (struct sockaddr_in6 *)&addr;
+        port = ntohs(sockinfo->sin6_port);
+        inet_ntop(AF_INET6, &sockinfo->sin6_addr, out_result, INET6_ADDRSTRLEN);
+    }
+
+#if 0
+    struct in_addr *src = (struct in_addr*)client_addr;
+    const char* res = NULL;
+    if (client_addr->sa_family == AF_INET)
+    {
+        res = inet_ntop(AF_INET, &(src->s_addr), out_result, INET_ADDRSTRLEN);
+    }
+    else if (client_addr->sa_family == AF_INET6)
+    {
+        res = inet_ntop(AF_INET6, &(src->s_addr), out_result, INET6_ADDRSTRLEN);
+    }
+    else {
+        fprintf(stderr, "Unknown AF family.");
+        res = NULL;
+    }
+
+    if (res == NULL)
+    {
+        log_error("Could not resolve client address");
+        strcpy(out_result, "unknown");
+    }
+#endif
 }
 
 int main(int argc, char** argv)
 {
+    openlog("aesdsocket", LOG_CONS, LOG_USER);
     printf("-> Setting up run flag\n");
-    //int res = init_run_flag();
-    int res = 0;
+    int res = init_run_flag();
+
+    printf("-> Setting up signal handler");
+    set_up_signals();
+
+    printf("-> Run flag = %d\n", get_run_flag());
     if (res != 0)
     {
         log_error("Could not set up run flag.");
@@ -351,9 +471,10 @@ int main(int argc, char** argv)
     bind_to_localhost(sockfd);
 
 
-    while (1 == get_run_flag())
+    while (true == get_run_flag())
     {
         printf("-> Listening for connections on socket.\n");
+        atomic_store(_is_listening_flag, true);
         int listen_res = listen(sockfd, SOMAXCONN);
         if (-1 == listen_res)
         {
@@ -365,11 +486,35 @@ int main(int argc, char** argv)
         socklen_t client_address_length = 0;
         memset(&client_address, 0, sizeof(struct sockaddr));
 
+        // Accept the connection
         int connection_socket_fd = accept(sockfd, &client_address, &client_address_length);
+        atomic_store(_is_listening_flag, false);
+
+        char client_ip_address[INET6_ADDRSTRLEN] = {0};
+        get_client_ip_address(connection_socket_fd, client_ip_address);
+#if 0
+        // Get the IP address of the client
+        char client_ip_address[INET6_ADDRSTRLEN] = {0};
+        struct sockaddr client_sock_addr;
+        if (0 != getpeername(connection_socket_fd, &client_sock_addr, &ip_address_len))
+        {
+            log_error("Could not resolve client ipv4 address.");
+            sprintf(client_ip_address, "unknown");
+        }
+        if (NULL == inet_ntop(AF_INET, &client_sock_addr, client_ip_address, ip_address_len))
+        {
+            log_error("Could not resolve client IPv4 address");
+            sprintf(client_ip_address, "unknown");
+        }
         if (-1 == connection_socket_fd)
         {
             log_error("Could not accept connection");
         }
+        else {
+            syslog(LOG_INFO, "Accepted connection from %s", client_ip_address);
+            printf(" * Accepted connection from %s\n", client_ip_address);
+        }
+#endif
         // I don't think we need to deal with concurrent socket connections here,
         // at least the way I read the assignment requirements. So we will just
         // handle one at a time. The unit test will likely not do more than SOMAXCONN
@@ -380,10 +525,25 @@ int main(int argc, char** argv)
             fprintf(stderr, "Error handling connection from %s\n", client_address.sa_data);
             syslog(LOG_ERR, "Error handling connection from %s", client_address.sa_data);
         }
+
+        if (0 == close(connection_socket_fd))
+        {
+            syslog(LOG_INFO, "Closed connection from %s", client_ip_address);
+            printf(" * Closed connection from %s\n", client_ip_address);
+        }
+        else
+        {
+            log_error("Could not close connection from client");
+        }
     }
 
     printf("-> Closing socket.\n");
     close(sockfd);
     close(diskfd);
+    if (0 != remove("/var/tmp/aesdsocketdata"))
+    {
+        log_error("Could not remove /var/tmp/aesdsocketdata");
+    }
+
     printf("-> Exiting.\n");
 }

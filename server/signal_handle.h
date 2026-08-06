@@ -11,11 +11,13 @@ int init_run_flag();
  * Returns 0 if program should terminate.
  * Returns -1 and sets errno if error occurred.
  */
-int get_run_flag();
+void get_run_flag();
 
 /** Sets the run flag.
  * See also: get_run_flag()
  */
-int set_run_flag(bool flag_value);
+void set_run_flag(bool flag_value);
+
+void set_up_signals();
 
 #endif /* AESD_SIGNAL_HANDLE_H_ */
