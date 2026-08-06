@@ -1,13 +1,13 @@
 #include "signal_handle.h"
-#include <semaphore.h>
 #include <fcntl.h>
-#include <sys/stat.h>
-#include <stdio.h>
-#include <errno.h>
-#include <stdlib.h>
-#include <stdatomic.h>
+#include <semaphore.h>
 #include <signal.h>
+#include <stdatomic.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/stat.h>
 #include <syslog.h>
+#include <unistd.h>
 
 // We need at least C11 to use stdatomic.h
 #ifndef __STDC_VERSION__
@@ -62,6 +62,8 @@ void signal_handler(int signo)
             {
                 fprintf(stderr, "Could not remove /var/tmp/aesdsocketdata\n");
             }
+            free(_run_flag);
+            free(_is_listening_flag);
             _exit(EXIT_SUCCESS);
             kill(getpid(), SIGKILL);
         }

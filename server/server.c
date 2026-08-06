@@ -33,12 +33,7 @@ int bind_to_localhost(int sockfd)
     struct addrinfo hints;
     memset(&hints, 0, sizeof(hints));
 
-    struct addrinfo *res = malloc(sizeof(struct addrinfo));
-    if (res == NULL)
-    {
-        log_error("Could not allocate memory for getting address of local port 9000");
-        exit(2);
-    }
+    struct addrinfo *res;
 
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
@@ -62,6 +57,7 @@ int bind_to_localhost(int sockfd)
         log_error("Could not bind to socket");
         exit(EXIT_FAILURE);
     }
+    freeaddrinfo(res);
     return 0;
 }
 
@@ -289,6 +285,7 @@ char* read_until_stop_condition(int sockfd, int diskfd, size_t *len)
             {
                 //printf("-> Handling packet: [%s]\n", packet);
                 handle_packet(sockfd, diskfd, packet, strlen(packet));
+                free(packet);
 
                 // TODO: The requirements here are murky. Might have to remove this.
                 keep_receiving = false;
@@ -296,18 +293,21 @@ char* read_until_stop_condition(int sockfd, int diskfd, size_t *len)
             return buf;
         }
     }
+    if (buf)
+        free(buf);
 }
 
 int handle_connection(int sockfd, int diskfd)
 {
     ssize_t this_round_bytes_read = 0;
     size_t buf_size = MAX_BUF_SIZE;
-    char *buf = calloc(buf_size + 1, sizeof(char)); // This is the pointer to the malloced block
     size_t index = 0; // This marks where recv is supposed to put data. It is also the total bytes read.
     bool received_full_token = false;
 
     char* full_msg = read_until_stop_condition(sockfd, diskfd, &buf_size);
     extract_token_and_consolidate_buffer(full_msg, buf_size);
+    free(full_msg);
+
 
     return 0;
 }
@@ -359,9 +359,23 @@ void get_client_ip_address(int client_sockfd, char* out_result)
 #endif
 }
 
+
+
 int main(int argc, char** argv)
 {
+    bool do_daemon_mode = false;
+
     openlog("aesdsocket", LOG_CONS, LOG_USER);
+
+    if (argc == 2)
+    {
+        if (0 == strcmp(argv[1], "-d"))
+        {
+            printf(" * -d flag passed in.\n");
+            do_daemon_mode = true;
+        }
+    }
+
     printf("-> Setting up run flag\n");
     int res = init_run_flag();
 
@@ -401,6 +415,19 @@ int main(int argc, char** argv)
     printf("-> Binding to socket\n");
     bind_to_localhost(sockfd);
 
+
+    if (do_daemon_mode)
+    {
+        if (0 != daemon(0, 1))
+        {
+            log_error("Could not daemonize server!\n");
+            exit(errno);
+        }
+        else
+        {
+            printf("->> DAEMON MODE ACTIVATED\n");
+        }
+    }
 
     while (true == get_run_flag())
     {
@@ -471,6 +498,9 @@ int main(int argc, char** argv)
     printf("-> Closing socket.\n");
     close(sockfd);
     close(diskfd);
+    free(_run_flag);
+    free(_is_listening_flag);
+
     if (0 != remove("/var/tmp/aesdsocketdata"))
     {
         log_error("Could not remove /var/tmp/aesdsocketdata");
