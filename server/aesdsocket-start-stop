@@ -1,0 +1,27 @@
+#!/bin/sh
+
+case "$1" in
+    start)
+        echo "Starting aesdsocket server"
+        start-stop-daemon --start /usr/bin/aesdsocket -d
+        ;;
+    stop)
+        echo "Stopping aesdsocket server"
+        for pid in $(pgrep -f aesdsocket); do
+            "Sending SIGTERM to PID $pid"
+            kill -TERM "$pid"
+        done
+        #start-stop-daemon --stop aesdsocket
+        ;;
+    status)
+        if pgrep -f aesdsocket &> /dev/null ; then
+            echo "aesdsocket is running"
+        else
+            echo "aesdsocket is not running"
+        fi
+        ;;
+    *)
+        echo "Usage $0 [start|stop|status]"
+        exit 1
+        ;;
+esac
