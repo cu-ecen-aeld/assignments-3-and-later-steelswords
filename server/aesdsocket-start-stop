@@ -3,14 +3,11 @@
 case "$1" in
     start)
         echo "Starting aesdsocket server"
-        start-stop-daemon --start /usr/bin/aesdsocket -d
+        start-stop-daemon -S -x /usr/bin/aesdsocket -- -d
         ;;
     stop)
         echo "Stopping aesdsocket server"
-        for pid in $(pgrep -f aesdsocket); do
-            "Sending SIGTERM to PID $pid"
-            kill -TERM "$pid"
-        done
+        killall -TERM aesdsocket
         #start-stop-daemon --stop aesdsocket
         ;;
     status)
