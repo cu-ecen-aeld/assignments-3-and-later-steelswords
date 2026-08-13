@@ -1,10 +1,12 @@
 #include "signal_handle.h"
+#include <errno.h>
 #include <fcntl.h>
 #include <semaphore.h>
 #include <signal.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <syslog.h>
 #include <unistd.h>
@@ -47,6 +49,53 @@ int set_run_flag(bool flag_value)
 {
     atomic_store(_run_flag, flag_value);
     return 0;
+}
+
+
+static void _sigset_die_if_error(int result, const char* const which)
+{
+    if (result == 0) return;
+    syslog(LOG_ERR, "!! Could not make sigset %s: %s", which, strerror(errno));
+    exit(EXIT_FAILURE);
+}
+
+sigset_t get_signals_to_mask()
+{
+    sigset_t mask;
+    int res = sigemptyset(&mask);
+    _sigset_die_if_error(res, "empty");
+
+    res = sigaddset(&mask, SIGINT);
+    _sigset_die_if_error(res, "sigint");
+
+    res = sigaddset(&mask, SIGTERM);
+    _sigset_die_if_error(res, "sigterm");
+
+    return mask;
+}
+
+void disable_signal_handlers()
+{
+    sigset_t mask = get_signals_to_mask();
+
+    if (0 != sigprocmask(SIG_BLOCK, &mask, NULL))
+    {
+        syslog(LOG_ERR, "Could not mask sigint and sigterm: %s",
+                strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+}
+
+void reenable_signal_handlers()
+{
+    sigset_t mask = get_signals_to_mask();
+
+    if (0 != sigprocmask(SIG_UNBLOCK, &mask, NULL))
+    {
+        syslog(LOG_ERR, "Could not mask sigint and sigterm: %s",
+                strerror(errno));
+        exit(EXIT_FAILURE);
+    }
 }
 
 void signal_handler(int signo)
