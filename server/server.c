@@ -1,31 +1,58 @@
+/** aesdsocket program for assignment 6
+ * file: server.c
+ * author: Tristan Andrus (steelswords)
+ */
+#define _GNU_SOURCE // Needed by gettid
+#include "utils.h"
+#include "signal_handle.h"
+#include <arpa/inet.h>
+#include <errno.h>
 #include <fcntl.h>
-#include <string.h>
-#include <sys/stat.h>
-#include <syslog.h>
-#include <sys/types.h>
-#include <sys/socket.h>
 #include <netdb.h>
+#include <pthread.h>
+#include <semaphore.h>
+#include <stdatomic.h>
+#include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <syslog.h>
 #include <time.h>
 #include <unistd.h>
-#include <semaphore.h>
-#include <errno.h>
-#include <stdlib.h>
-#include <stdbool.h>
-#include <arpa/inet.h>
-#include <stdatomic.h>
-#include "signal_handle.h"
+#include <sys/queue.h>
+
+
+struct ThreadListNode {
+    pthread_t thread_handle;
+    bool still_running;
+    bool still_listening;
+    SLIST_ENTRY(ThreadListNode) nodes;
+};
+SLIST_HEAD(ThreadList, ThreadListNode);
+
+/** @section Global Variables { */
+struct ThreadList *g_thread_list_head = NULL;
 
 extern atomic_bool *_run_flag;
 extern atomic_bool *_is_listening_flag;
 
+pthread_mutex_t g_file_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 #define MAX_BUF_SIZE (4 * 1024)
 
-void log_error(const char *msg)
+/** @section } */
+
+
+void add_thread_to_list(struct ThreadList* head, pthread_t tid)
 {
-    char *errno_reason = strerror(errno);
-    fprintf(stderr, "%s: %s\n", msg, errno_reason);
-    syslog(LOG_ERR, "%s: %s", msg, errno_reason);
+    struct ThreadListNode* node = malloc(sizeof(struct ThreadListNode));
+    node->thread_handle = tid;
+    node->still_running = true;
+    node->still_listening = false;
+    SLIST_INSERT_HEAD(head, node, nodes);
 }
 
 int bind_to_localhost(int sockfd)
@@ -61,85 +88,11 @@ int bind_to_localhost(int sockfd)
     return 0;
 }
 
-int write_all(int fd, const char* buf, size_t len)
-{
-    ssize_t bytes_left = len;
-    ssize_t bytes_written_this_round = 0;
-    int fail_count = 0;
-    const int MAX_FAIL_COUNT = 20;
-
-    while (bytes_left > 0)
-    {
-        bytes_written_this_round = write(fd, (void*)buf, bytes_left);
-        if (bytes_written_this_round <= 0)
-        {
-            log_error("Could not write to file");
-            fail_count++;
-            if (fail_count > MAX_FAIL_COUNT)
-            {
-                fprintf(stderr, "!! Could not write buf \"%s\" to fd %d. Quitting with %zd bytes to go. write() last returned %zd\n",
-                        buf,
-                        fd,
-                        bytes_left,
-                        bytes_written_this_round
-                        );
-                syslog(LOG_ERR, "Too many failures writing to fd %d. Quitting.", fd);
-                return -1;
-            }
-            continue;
-        }
-        else
-        {
-            syslog(LOG_DEBUG, "Wrote %zd bytes to file", bytes_written_this_round);
-            bytes_left = bytes_left - bytes_written_this_round;
-            buf += bytes_written_this_round;
-        }
-    }
-    return 0;
-    syslog(LOG_DEBUG, "Finished writing all bytes to fd %d", fd);
-}
-
-int duplicate_data_across_fds(int input_fd, int output_fd)
-{
-    ssize_t num_bytes_read = 0;
-    char buffer[MAX_BUF_SIZE];
-
-    while(( num_bytes_read = read(input_fd, buffer, MAX_BUF_SIZE)) > 0)
-    {
-        if (-1 == write_all(output_fd, buffer, num_bytes_read))
-        {
-            log_error("Could not write all bytes to the buffer.");
-            return -1;
-        }
-    }
-
-    return 0;
-}
-
-void spit_file_back_out_to_socket(int sockfd, int diskfd)
-{
-    // Rewind to beginning of file
-    off_t seek_res = lseek(diskfd, 0, SEEK_SET);
-    if (0 != seek_res)
-    {
-        log_error("Could not read from beginning of file");
-        exit(13);
-    }
-
-    duplicate_data_across_fds(diskfd, sockfd);
-
-    if (-1 == lseek(diskfd, 0, SEEK_END))
-    {
-        log_error("Could not reset file position to end");
-        exit(15);
-    }
-}
-
 /** Like strtok, but it manually rearranges the buffer when a token is found, and scootches
  * the remaining contents to the beginning of the buffer. Can be called many times on the same  */
 char* extract_token_and_consolidate_buffer(char *buf, size_t len)
 {
-    printf("-> Checking for newlines in recevied messages.\n");
+    printf("-> Checking for newlines in received messages.\n");
     for (size_t i = 0; i < len; ++i)
     {
         //printf("%02x ", buf[i]);
@@ -177,10 +130,17 @@ void handle_packet(int sockfd, int diskfd, char* msg, size_t len)
 {
     //printf("-> Handling packet of size %zu: \"%s\"\n", len, msg);
     printf("-> Handling packet of size %zu\n", len);
+    int this_thread_id = (int)gettid();
+    printf("-> Thread %d awaiting write lock.\n", this_thread_id);
+    pthread_mutex_lock(&g_file_mutex);
+    printf("-> Thread %d: acquired write lock. Writing to file and socket.\n",
+            this_thread_id);
     write_all(diskfd, msg, len);
     char newline[1] = "\n";
     write_all(diskfd, newline, 1);
     spit_file_back_out_to_socket(sockfd, diskfd);
+    pthread_mutex_unlock(&g_file_mutex);
+    printf("-> Thread %d: released write lock.\n", this_thread_id);
 }
 
 char* read_until_stop_condition(int sockfd, int diskfd, size_t *len)
@@ -269,7 +229,6 @@ int handle_connection(int sockfd, int diskfd)
     return 0;
 }
 
-//void get_client_ip_address(int client_sockfd, struct sockaddr *client_addr, char* out_result)
 // Based on example code from Beej's Guide
 // out_result is allocated on the caller's side. It must be at least INET6_ADDRSTRLEN chars long.
 void get_client_ip_address(int client_sockfd, char* out_result)
@@ -290,10 +249,45 @@ void get_client_ip_address(int client_sockfd, char* out_result)
     }
 }
 
+void shutdown_operations()
+{
+    printf("-> Shutting down.\n");
+    set_run_flag(false);
 
+    printf("-> Joining all threads.\n");
+    // Join each thread
+    struct ThreadListNode *node = NULL;
+    SLIST_FOREACH(node, g_thread_list_head, nodes)
+    {
+        pthread_join(node->thread_handle, NULL);
+    }
+    if (0 != remove("/var/tmp/aesdsocketdata"))
+    {
+        fprintf(stderr, "Could not remove /var/tmp/aesdsocketdata\n");
+        syslog(LOG_ERR, "Could not remove /var/tmp/aesdsocketdata");
+    }
+    free(_run_flag);
+    free(_is_listening_flag);
+#if 0
+    _exit(EXIT_SUCCESS);
+    kill(getpid(), SIGKILL);
+#endif
+}
+
+int spawn_handler_thread(struct ThreadList *list_head, int client_sockfd)
+{
+
+    // TODO
+
+
+    return 0;
+}
 
 int main(int argc, char** argv)
 {
+    g_thread_list_head = malloc(sizeof(struct ThreadListNode));
+    SLIST_INIT(g_thread_list_head);
+
     bool do_daemon_mode = false;
 
     openlog("aesdsocket", LOG_CONS, LOG_USER);
@@ -340,6 +334,7 @@ int main(int argc, char** argv)
     }
     // Set sockopt so the socket doesn't stay open past when the process exits
     int yes = 1;
+    setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
     setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
 
     // Bind to socket

@@ -20,6 +20,8 @@
 #endif
 #include <stdatomic.h>
 
+// Forward declare what's in server.c
+extern void shutdown_operations();
 
 /** Flag cleared by sigint and sigterm handler. When it clears, we don't do another
  * loop of listen(), accept(), etc: We clean up and terminate. */
@@ -105,6 +107,12 @@ void signal_handler(int signo)
         syslog(LOG_WARNING, "Caught signal, exiting");
         printf("-> Caught signal, exiting.\n");
 
+        disable_signal_handlers();
+        shutdown_operations();
+        reenable_signal_handlers();
+    }
+
+#if 0
         if (atomic_load(_is_listening_flag)) {
             printf("-> Removing /var/tmp/aesdsocketdata\n");
             if (0 != remove("/var/tmp/aesdsocketdata"))
@@ -124,10 +132,19 @@ void signal_handler(int signo)
         set_run_flag(false);
         printf("-> Returning from signal handler\n");
     }
+#endif
 }
 
 void set_up_signals()
 {
+
+#if 0
+    struct sigaction action = {
+        .sa_handler = signal_handler,
+
+    };
+#endif
+
     if (SIG_ERR == signal(SIGINT, signal_handler))
         syslog(LOG_ERR, "Could not set up handler for SIGINT");
     if (SIG_ERR == signal(SIGTERM, signal_handler))
