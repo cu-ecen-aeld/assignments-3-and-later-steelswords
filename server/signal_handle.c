@@ -31,13 +31,18 @@ atomic_bool *_run_flag;
  * to complete. */
 atomic_bool *_is_listening_flag;
 
+/** Flag that indicates we should print a timestamp to the file. */
+atomic_bool *_timestamp_due_flag;
+
 int init_run_flag()
 {
     _run_flag = malloc(sizeof(atomic_bool));
     _is_listening_flag = malloc(sizeof(atomic_bool));
+    _timestamp_due_flag = malloc(sizeof(atomic_bool));
     atomic_init(_run_flag, true);
     atomic_store(_run_flag, true);
     atomic_init(_is_listening_flag, false);
+    atomic_init(_timestamp_due_flag, false);
     return 0;
 }
 
@@ -111,6 +116,11 @@ void signal_handler(int signo)
         //shutdown_operations();
         //reenable_signal_handlers();
     }
+    if (signo == SIGALRM)
+    {
+        printf("-> High time we had ourselves a timestamp!\n");
+        atomic_store(_timestamp_due_flag, true);
+    }
 
 #if 0
         if (atomic_load(_is_listening_flag)) {
@@ -148,5 +158,8 @@ void set_up_signals()
     if (SIG_ERR == signal(SIGINT, signal_handler))
         syslog(LOG_ERR, "Could not set up handler for SIGINT");
     if (SIG_ERR == signal(SIGTERM, signal_handler))
-        syslog(LOG_ERR, "Could not set up handler for SIGINT");
+        syslog(LOG_ERR, "Could not set up handler for SIGTERM");
+    if (SIG_ERR == signal(SIGALRM, signal_handler))
+        syslog(LOG_ERR, "Could not set up handler for SIGALRM");
+
 }

@@ -19,6 +19,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/time.h>
 #include <syslog.h>
 #include <time.h>
 #include <unistd.h>
@@ -38,6 +39,7 @@ struct ThreadList *g_thread_list_head = NULL;
 
 extern atomic_bool *_run_flag;
 extern atomic_bool *_is_listening_flag;
+extern atomic_bool *_timestamp_due_flag;
 
 pthread_mutex_t g_file_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -48,6 +50,42 @@ pthread_mutex_t g_file_mutex = PTHREAD_MUTEX_INITIALIZER;
 // Foreard declarations
 void get_client_ip_address(int client_sockfd, char* out_result);
 void* handle_connection(void*);
+
+#define MAX_TIMESTAMP_LEN (998)
+char* get_timestamp_str()
+{
+    //struct timespec tp;
+    //if (0 != clock_gettime(CLOCK_REALTIME, &tp))
+    //{
+    //    log_error("could not get accurate timestamp.");
+    //}
+    time_t now = time(NULL);
+    struct tm *human_time = localtime(&now);
+
+    char* result = calloc(MAX_TIMESTAMP_LEN + 1, sizeof(char));
+    strftime(result, MAX_TIMESTAMP_LEN, "%a, %d %b %Y %T %z", human_time);
+    return result;
+}
+
+void *print_timestamp_on_time(void* data)
+{
+    GlobalServerState* state = (GlobalServerState*)data;
+    int diskfd = state->diskfd;
+    while(true == get_run_flag())
+    {
+        // Wait until flag is true
+        while ((true == get_run_flag()) && (false == atomic_load(_timestamp_due_flag)))
+        {
+            usleep(10* 1000);
+        }
+        pthread_mutex_lock(&g_file_mutex);
+        char *timestamp_str = get_timestamp_str();
+        dprintf(diskfd, "timestamp:%s\n", timestamp_str);
+        pthread_mutex_unlock(&g_file_mutex);
+        free(timestamp_str);
+    }
+    return NULL;
+}
 
 void add_thread_to_list(struct ThreadList* head, pthread_t tid)
 {
@@ -115,12 +153,6 @@ int get_bound_socket()
     return sockfd;
 }
 
-typedef struct _GlobalServerState {
-    int diskfd;
-    int listen_sockfd;
-    struct ThreadList *list_head;
-} GlobalServerState;
-
 /** Listens as long as the run flag is operational. When clients connect, this
  * dispatches connection handler threads. */
 void *listen_loop(void *global_server_state)
@@ -128,6 +160,7 @@ void *listen_loop(void *global_server_state)
     GlobalServerState *state = (GlobalServerState *)global_server_state;
     int diskfd = state->diskfd;
     int sockfd = state->listen_sockfd;
+    int connection_number = 0;
 
     while (true == get_run_flag())
     {
@@ -198,12 +231,19 @@ void *listen_loop(void *global_server_state)
         state->listen_sockfd = connection_socket_fd;
         state->list_head = g_thread_list_head;
 
+        char thread_name[16] = {0};
+        sprintf(thread_name, "CONCTN%03d-%03d", connection_socket_fd, connection_number);
+        printf(" * Starting thread %s\n", thread_name);
+
         if (0 != pthread_create(&new_thread_handle, NULL, handle_connection, (void*)state))
         {
             log_error("Could not create thread to handle new connection.");
             exit(6);
         }
+
+        pthread_setname_np(new_thread_handle, thread_name);
         add_thread_to_list(g_thread_list_head, new_thread_handle);
+        connection_number++;
     }
     close(sockfd);
     return NULL;
@@ -410,18 +450,41 @@ void shutdown_operations()
         free(tmp);
     }
 
+#if 0
     if (0 != remove("/var/tmp/aesdsocketdata"))
     {
         fprintf(stderr, "Could not remove /var/tmp/aesdsocketdata\n");
         syslog(LOG_ERR, "Could not remove /var/tmp/aesdsocketdata");
     }
+#endif
 
-    free(_run_flag);
-    free(_is_listening_flag);
 #if 0
     _exit(EXIT_SUCCESS);
     kill(getpid(), SIGKILL);
 #endif
+}
+
+/** Sets up an interval timer for every `every_secs` seconds. And starts the thread to watch
+ * for changes and run the timestamp code. The caller is responsible for freeing `state`. */
+pthread_t set_up_timestamp_timer(time_t every_secs, GlobalServerState *state)
+{
+    struct timeval interval = {
+        .tv_sec = every_secs,
+        .tv_usec = 0,
+    };
+    struct itimerval timer_interval = {
+        .it_interval = interval,
+    };
+
+    setitimer(ITIMER_REAL, &timer_interval, NULL);
+
+    pthread_t tid;
+    if (0 != pthread_create(&tid, NULL, print_timestamp_on_time, state))
+    {
+        log_error("!! Could not create timestamp thread");
+    }
+    pthread_setname_np(tid, "timestamppnt");
+    return tid;
 }
 
 int main(int argc, char** argv)
@@ -485,12 +548,16 @@ int main(int argc, char** argv)
         .listen_sockfd = sockfd,
         .list_head = g_thread_list_head,
     };
+
+    pthread_t timestamp_thread_handle = set_up_timestamp_timer(10, &listen_loop_args);
+
     pthread_t listen_loop_handle = {0};
     if (0 != pthread_create(&listen_loop_handle, NULL, &listen_loop, (void*)&listen_loop_args))
     {
         syslog(LOG_ERR, "Could not create listen loop thread: %s", strerror(errno));
         exit(EXIT_FAILURE);
     }
+    pthread_setname_np(listen_loop_handle, "listen_loop");
 
     // This is the reaper. Wait for run flag to be cleared.
     while (get_run_flag() == true)
@@ -498,13 +565,19 @@ int main(int argc, char** argv)
         usleep(200 * 1000);
     }
 
+    printf("-> Proceeding with shutdown.\n");
+
     pthread_join(listen_loop_handle, NULL);
+    pthread_join(timestamp_thread_handle, NULL);
 
     shutdown_operations();
 
     printf("-> Closing socket.\n");
     close(sockfd);
     close(diskfd);
+
+    free(_run_flag);
+    free(_is_listening_flag);
 
     if (0 != remove("/var/tmp/aesdsocketdata"))
     {

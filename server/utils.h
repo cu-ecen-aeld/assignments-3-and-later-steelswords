@@ -12,4 +12,10 @@ void log_error(const char *msg);
 
 int duplicate_data_across_fds(int input_fd, int output_fd);
 
+typedef struct _GlobalServerState {
+    int diskfd;
+    int listen_sockfd;
+    struct ThreadList *list_head;
+} GlobalServerState;
+
 #endif /* _AESD_ASSIGNMENT_UTILS_H_ */
