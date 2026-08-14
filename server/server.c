@@ -76,12 +76,13 @@ void *print_timestamp_on_time(void* data)
         // Wait until flag is true
         while ((true == get_run_flag()) && (false == atomic_load(_timestamp_due_flag)))
         {
-            usleep(10* 1000);
+            usleep(100* 1000);
         }
         pthread_mutex_lock(&g_file_mutex);
         char *timestamp_str = get_timestamp_str();
         dprintf(diskfd, "timestamp:%s\n", timestamp_str);
         pthread_mutex_unlock(&g_file_mutex);
+        atomic_store(_timestamp_due_flag, false);
         free(timestamp_str);
     }
     return NULL;
@@ -474,6 +475,7 @@ pthread_t set_up_timestamp_timer(time_t every_secs, GlobalServerState *state)
     };
     struct itimerval timer_interval = {
         .it_interval = interval,
+        .it_value = interval,
     };
 
     setitimer(ITIMER_REAL, &timer_interval, NULL);
