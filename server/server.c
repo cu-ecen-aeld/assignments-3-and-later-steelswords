@@ -450,6 +450,7 @@ void shutdown_operations()
         node = SLIST_NEXT(node, nodes);
         free(tmp);
     }
+    free(g_thread_list_head);
 
 #if 0
     if (0 != remove("/var/tmp/aesdsocketdata"))
@@ -580,6 +581,7 @@ int main(int argc, char** argv)
 
     free(_run_flag);
     free(_is_listening_flag);
+    free(_timestamp_due_flag);
 
     if (0 != remove("/var/tmp/aesdsocketdata"))
     {
