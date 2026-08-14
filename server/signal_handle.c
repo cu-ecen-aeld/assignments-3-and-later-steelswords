@@ -106,10 +106,10 @@ void signal_handler(int signo)
     {
         syslog(LOG_WARNING, "Caught signal, exiting");
         printf("-> Caught signal, exiting.\n");
-
-        disable_signal_handlers();
-        shutdown_operations();
-        reenable_signal_handlers();
+        set_run_flag(false);
+        //disable_signal_handlers();
+        //shutdown_operations();
+        //reenable_signal_handlers();
     }
 
 #if 0

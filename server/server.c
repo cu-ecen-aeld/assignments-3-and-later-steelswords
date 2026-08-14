@@ -26,6 +26,7 @@
 
 struct ThreadListNode {
     pthread_t thread_handle;
+    // TODO: Remove
     bool still_running;
     bool still_listening;
     SLIST_ENTRY(ThreadListNode) nodes;
@@ -46,7 +47,7 @@ pthread_mutex_t g_file_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // Foreard declarations
 void get_client_ip_address(int client_sockfd, char* out_result);
-int handle_connection(int sockfd, int diskfd);
+void* handle_connection(void*);
 
 void add_thread_to_list(struct ThreadList* head, pthread_t tid)
 {
@@ -137,7 +138,7 @@ void *listen_loop(void *global_server_state)
             {
                 if (errno == EAGAIN)
                 {
-                    //usleep(50*1000);
+                    usleep(50*1000);
                     continue;
                 }
                 log_error("Could not listen to socket");
@@ -154,12 +155,13 @@ void *listen_loop(void *global_server_state)
         int connection_socket_fd = -1;
         while(true == get_run_flag())
         {
+            //printf(" * Trying to accept connection.\n");
             connection_socket_fd = accept(sockfd, &client_address, &client_address_length);
             if (-1 == connection_socket_fd)
             {
                 if (errno == EAGAIN)
                 {
-                    //usleep(50*1000);
+                    usleep(20*1000);
                     continue;
                 }
                 else
@@ -170,34 +172,40 @@ void *listen_loop(void *global_server_state)
             }
             else break;
         }
-
-        char client_ip_address[INET6_ADDRSTRLEN] = {0};
-        get_client_ip_address(connection_socket_fd, client_ip_address);
-
-        syslog(LOG_INFO, "Accepted connection from %s", client_ip_address);
-        printf(" * Accepted connection from %s\n", client_ip_address);
-
-        // I don't think we need to deal with concurrent socket connections here,
-        // at least the way I read the assignment requirements. So we will just
-        // handle one at a time. The unit test will likely not do more than SOMAXCONN
-        // connections simultaneously.
-        int handle_result = handle_connection(connection_socket_fd, diskfd);
-        if (0 != handle_result)
+        if (false == get_run_flag())
         {
-            fprintf(stderr, "Error handling connection from %s\n", client_address.sa_data);
-            syslog(LOG_ERR, "Error handling connection from %s", client_address.sa_data);
+            printf("-> Exiting listen loop.\n");
+            close(sockfd);
+            return NULL;
         }
 
-        if (0 == close(connection_socket_fd))
+
+        pthread_t new_thread_handle;
+#if 0
+        GlobalServerState state = {
+            .diskfd = diskfd,
+            .listen_sockfd = connection_socket_fd,
+            .list_head = g_thread_list_head,
+        };
+#endif
+        GlobalServerState *state = malloc(sizeof(GlobalServerState));
+        if (NULL == state)
         {
-            syslog(LOG_INFO, "Closed connection from %s", client_ip_address);
-            printf(" * Closed connection from %s\n", client_ip_address);
+            log_error("Could not allocate more memory");
+            exit(10);
         }
-        else
+        state->diskfd = diskfd;
+        state->listen_sockfd = connection_socket_fd;
+        state->list_head = g_thread_list_head;
+
+        if (0 != pthread_create(&new_thread_handle, NULL, handle_connection, (void*)state))
         {
-            log_error("Could not close connection from client");
+            log_error("Could not create thread to handle new connection.");
+            exit(6);
         }
+        add_thread_to_list(g_thread_list_head, new_thread_handle);
     }
+    close(sockfd);
     return NULL;
 }
 
@@ -331,15 +339,36 @@ char* read_until_stop_condition(int sockfd, int diskfd, size_t *len)
         free(buf);
 }
 
-int handle_connection(int sockfd, int diskfd)
+void* handle_connection(void *args)
 {
+    GlobalServerState *state = (GlobalServerState*)args;
+    int sockfd = state->listen_sockfd;
+    int diskfd = state->diskfd;
+    free(args);
+
+    char client_ip_address[INET6_ADDRSTRLEN] = {0};
+    get_client_ip_address(sockfd, client_ip_address);
+
+    syslog(LOG_INFO, "Accepted connection from %s", client_ip_address);
+    printf(" * Accepted connection from %s\n", client_ip_address);
+
     size_t buf_size = MAX_BUF_SIZE;
 
     char* full_msg = read_until_stop_condition(sockfd, diskfd, &buf_size);
     extract_token_and_consolidate_buffer(full_msg, buf_size);
     free(full_msg);
 
-    return 0;
+    if (0 == close(sockfd))
+    {
+        syslog(LOG_INFO, "Closed connection from %s", client_ip_address);
+        printf(" * Closed connection from %s\n", client_ip_address);
+    }
+    else
+    {
+        log_error("Could not close connection from client");
+    }
+
+    return NULL;
 }
 
 // Based on example code from Beej's Guide
@@ -370,16 +399,22 @@ void shutdown_operations()
     printf("-> Joining all threads.\n");
     // Join each thread
     struct ThreadListNode *node = NULL;
-    SLIST_FOREACH(node, g_thread_list_head, nodes)
+    node = SLIST_FIRST(g_thread_list_head);
+    while (node != NULL)
     {
         pthread_join(node->thread_handle, NULL);
+        SLIST_REMOVE(g_thread_list_head, node, ThreadListNode, nodes);
+
+        struct ThreadListNode *tmp = node;
+        node = SLIST_NEXT(node, nodes);
+        free(tmp);
     }
+
     if (0 != remove("/var/tmp/aesdsocketdata"))
     {
         fprintf(stderr, "Could not remove /var/tmp/aesdsocketdata\n");
         syslog(LOG_ERR, "Could not remove /var/tmp/aesdsocketdata");
     }
-
 
     free(_run_flag);
     free(_is_listening_flag);
@@ -387,15 +422,6 @@ void shutdown_operations()
     _exit(EXIT_SUCCESS);
     kill(getpid(), SIGKILL);
 #endif
-}
-
-int spawn_handler_thread(struct ThreadList *list_head, int client_sockfd)
-{
-
-    // TODO
-
-
-    return 0;
 }
 
 int main(int argc, char** argv)
@@ -466,7 +492,7 @@ int main(int argc, char** argv)
         exit(EXIT_FAILURE);
     }
 
-    // This is the reaper
+    // This is the reaper. Wait for run flag to be cleared.
     while (get_run_flag() == true)
     {
         usleep(200 * 1000);
