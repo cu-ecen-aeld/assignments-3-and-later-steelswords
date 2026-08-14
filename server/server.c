@@ -24,7 +24,6 @@
 #include <unistd.h>
 #include <sys/queue.h>
 
-
 struct ThreadListNode {
     pthread_t thread_handle;
     bool still_running;
@@ -45,6 +44,9 @@ pthread_mutex_t g_file_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /** @section } */
 
+// Foreard declarations
+void get_client_ip_address(int client_sockfd, char* out_result);
+int handle_connection(int sockfd, int diskfd);
 
 void add_thread_to_list(struct ThreadList* head, pthread_t tid)
 {
@@ -86,6 +88,117 @@ int bind_to_localhost(int sockfd)
     }
     freeaddrinfo(res);
     return 0;
+}
+
+/** Returns a socket that has had open() and bind() called on it or dies trying.
+ * The return value is guaranteed to be a socket file descriptor. */
+int get_bound_socket()
+{
+    // Open socket
+    printf("-> Opening socket\n");
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0)
+    {
+        log_error("Could not open socket");
+        exit(EXIT_FAILURE);
+    }
+    // Set sockopt so the socket doesn't stay open past when the process exits
+    int yes = 1;
+    setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+    fcntl(sockfd, F_SETFL, O_NONBLOCK);
+
+    // Bind to socket
+    printf("-> Binding to socket\n");
+    bind_to_localhost(sockfd);
+
+    return sockfd;
+}
+
+typedef struct _GlobalServerState {
+    int diskfd;
+    int listen_sockfd;
+    struct ThreadList *list_head;
+} GlobalServerState;
+
+/** Listens as long as the run flag is operational. When clients connect, this
+ * dispatches connection handler threads. */
+void *listen_loop(void *global_server_state)
+{
+    GlobalServerState *state = (GlobalServerState *)global_server_state;
+    int diskfd = state->diskfd;
+    int sockfd = state->listen_sockfd;
+
+    while (true == get_run_flag())
+    {
+        printf("-> Listening for connections on socket.\n");
+        while (true == get_run_flag())
+        {
+            if (-1 == listen(sockfd, SOMAXCONN))
+            {
+                if (errno == EAGAIN)
+                {
+                    //usleep(50*1000);
+                    continue;
+                }
+                log_error("Could not listen to socket");
+                exit(3);
+            }
+            else break;
+        }
+
+        struct sockaddr client_address;
+        socklen_t client_address_length = 0;
+        memset(&client_address, 0, sizeof(struct sockaddr));
+
+        // Accept the connection
+        int connection_socket_fd = -1;
+        while(true == get_run_flag())
+        {
+            connection_socket_fd = accept(sockfd, &client_address, &client_address_length);
+            if (-1 == connection_socket_fd)
+            {
+                if (errno == EAGAIN)
+                {
+                    //usleep(50*1000);
+                    continue;
+                }
+                else
+                {
+                    log_error("Could not accept incoming connection");
+                    exit(4);
+                }
+            }
+            else break;
+        }
+
+        char client_ip_address[INET6_ADDRSTRLEN] = {0};
+        get_client_ip_address(connection_socket_fd, client_ip_address);
+
+        syslog(LOG_INFO, "Accepted connection from %s", client_ip_address);
+        printf(" * Accepted connection from %s\n", client_ip_address);
+
+        // I don't think we need to deal with concurrent socket connections here,
+        // at least the way I read the assignment requirements. So we will just
+        // handle one at a time. The unit test will likely not do more than SOMAXCONN
+        // connections simultaneously.
+        int handle_result = handle_connection(connection_socket_fd, diskfd);
+        if (0 != handle_result)
+        {
+            fprintf(stderr, "Error handling connection from %s\n", client_address.sa_data);
+            syslog(LOG_ERR, "Error handling connection from %s", client_address.sa_data);
+        }
+
+        if (0 == close(connection_socket_fd))
+        {
+            syslog(LOG_INFO, "Closed connection from %s", client_ip_address);
+            printf(" * Closed connection from %s\n", client_ip_address);
+        }
+        else
+        {
+            log_error("Could not close connection from client");
+        }
+    }
+    return NULL;
 }
 
 /** Like strtok, but it manually rearranges the buffer when a token is found, and scootches
@@ -266,6 +379,8 @@ void shutdown_operations()
         fprintf(stderr, "Could not remove /var/tmp/aesdsocketdata\n");
         syslog(LOG_ERR, "Could not remove /var/tmp/aesdsocketdata");
     }
+
+
     free(_run_flag);
     free(_is_listening_flag);
 #if 0
@@ -324,23 +439,7 @@ int main(int argc, char** argv)
         exit(EXIT_FAILURE);
     }
 
-    // Open socket
-    printf("-> Opening socket\n");
-    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0)
-    {
-        log_error("Could not open socket");
-        exit(EXIT_FAILURE);
-    }
-    // Set sockopt so the socket doesn't stay open past when the process exits
-    int yes = 1;
-    setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
-    setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
-
-    // Bind to socket
-    printf("-> Binding to socket\n");
-    bind_to_localhost(sockfd);
-
+   int sockfd = get_bound_socket(); 
 
     if (do_daemon_mode)
     {
@@ -355,58 +454,31 @@ int main(int argc, char** argv)
         }
     }
 
-    while (true == get_run_flag())
+    GlobalServerState listen_loop_args = {
+        .diskfd = diskfd,
+        .listen_sockfd = sockfd,
+        .list_head = g_thread_list_head,
+    };
+    pthread_t listen_loop_handle = {0};
+    if (0 != pthread_create(&listen_loop_handle, NULL, &listen_loop, (void*)&listen_loop_args))
     {
-        printf("-> Listening for connections on socket.\n");
-        atomic_store(_is_listening_flag, true);
-        int listen_res = listen(sockfd, SOMAXCONN);
-        if (-1 == listen_res)
-        {
-            log_error("Could not listen to socket");
-            exit(3);
-        }
-
-        struct sockaddr client_address;
-        socklen_t client_address_length = 0;
-        memset(&client_address, 0, sizeof(struct sockaddr));
-
-        // Accept the connection
-        int connection_socket_fd = accept(sockfd, &client_address, &client_address_length);
-        atomic_store(_is_listening_flag, false);
-
-        char client_ip_address[INET6_ADDRSTRLEN] = {0};
-        get_client_ip_address(connection_socket_fd, client_ip_address);
-
-        syslog(LOG_INFO, "Accepted connection from %s", client_ip_address);
-        printf(" * Accepted connection from %s\n", client_ip_address);
-
-        // I don't think we need to deal with concurrent socket connections here,
-        // at least the way I read the assignment requirements. So we will just
-        // handle one at a time. The unit test will likely not do more than SOMAXCONN
-        // connections simultaneously.
-        int handle_result = handle_connection(connection_socket_fd, diskfd);
-        if (0 != handle_result)
-        {
-            fprintf(stderr, "Error handling connection from %s\n", client_address.sa_data);
-            syslog(LOG_ERR, "Error handling connection from %s", client_address.sa_data);
-        }
-
-        if (0 == close(connection_socket_fd))
-        {
-            syslog(LOG_INFO, "Closed connection from %s", client_ip_address);
-            printf(" * Closed connection from %s\n", client_ip_address);
-        }
-        else
-        {
-            log_error("Could not close connection from client");
-        }
+        syslog(LOG_ERR, "Could not create listen loop thread: %s", strerror(errno));
+        exit(EXIT_FAILURE);
     }
+
+    // This is the reaper
+    while (get_run_flag() == true)
+    {
+        usleep(200 * 1000);
+    }
+
+    pthread_join(listen_loop_handle, NULL);
+
+    shutdown_operations();
 
     printf("-> Closing socket.\n");
     close(sockfd);
     close(diskfd);
-    free(_run_flag);
-    free(_is_listening_flag);
 
     if (0 != remove("/var/tmp/aesdsocketdata"))
     {
