@@ -3,11 +3,11 @@
  * author: Tristan Andrus (steelswords)
  */
 #define _GNU_SOURCE // Needed by gettid
-#include "utils.h"
 #include "signal_handle.h"
+#include "network_utils.h"
+#include "utils.h"
 #include <arpa/inet.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <netdb.h>
 #include <pthread.h>
 #include <semaphore.h>
@@ -16,14 +16,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/queue.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
-#include <sys/types.h>
 #include <sys/time.h>
+#include <sys/types.h>
 #include <syslog.h>
+#include <fcntl.h>
 #include <time.h>
 #include <unistd.h>
-#include <sys/queue.h>
 
 struct ThreadListNode {
     pthread_t thread_handle;
@@ -47,7 +48,7 @@ pthread_mutex_t g_file_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /** @section } */
 
-// Foreard declarations
+// Forward declarations
 void get_client_ip_address(int client_sockfd, char* out_result);
 void* handle_connection(void*);
 
@@ -95,63 +96,6 @@ void add_thread_to_list(struct ThreadList* head, pthread_t tid)
     node->still_running = true;
     node->still_listening = false;
     SLIST_INSERT_HEAD(head, node, nodes);
-}
-
-int bind_to_localhost(int sockfd)
-{
-    struct addrinfo hints;
-    memset(&hints, 0, sizeof(hints));
-
-    struct addrinfo *res;
-
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_PASSIVE;
-    hints.ai_protocol = 0;
-
-    int getaddrinfo_result = getaddrinfo(NULL, "9000", &hints, &res);
-    if (getaddrinfo_result != 0)
-    {
-        const char *gai_error_str = gai_strerror(getaddrinfo_result);
-        fprintf(stderr, "Could not get addrinfo for port 9000: %s\n",
-                gai_error_str);
-        syslog(LOG_ERR, "Could not get addrinfo for port 9000: %s",
-                gai_error_str);
-        exit(EXIT_FAILURE);
-    }
-
-    int bind_result = bind(sockfd, res->ai_addr, res->ai_addrlen);
-    if (bind_result < 0)
-    {
-        log_error("Could not bind to socket");
-        exit(EXIT_FAILURE);
-    }
-    freeaddrinfo(res);
-    return 0;
-}
-
-/** Returns a socket that has had open() and bind() called on it or dies trying.
- * The return value is guaranteed to be a socket file descriptor. */
-int get_bound_socket()
-{
-    // Open socket
-    printf("-> Opening socket\n");
-    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0)
-    {
-        log_error("Could not open socket");
-        exit(EXIT_FAILURE);
-    }
-    // Set sockopt so the socket doesn't stay open past when the process exits
-    int yes = 1;
-    setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
-    fcntl(sockfd, F_SETFL, O_NONBLOCK);
-
-    // Bind to socket
-    printf("-> Binding to socket\n");
-    bind_to_localhost(sockfd);
-
-    return sockfd;
 }
 
 /** Listens as long as the run flag is operational. When clients connect, this
@@ -412,25 +356,6 @@ void* handle_connection(void *args)
     return NULL;
 }
 
-// Based on example code from Beej's Guide
-// out_result is allocated on the caller's side. It must be at least INET6_ADDRSTRLEN chars long.
-void get_client_ip_address(int client_sockfd, char* out_result)
-{
-    strcpy(out_result, "unknown");
-    // First, get the sockaddr info about the client peer.
-    socklen_t len = sizeof (struct sockaddr_storage);
-    struct sockaddr_storage addr;
-    getpeername(client_sockfd, (struct sockaddr*)&addr, &len);
-
-    if (AF_INET == addr.ss_family)
-    {
-        struct sockaddr_in *sockinfo = (struct sockaddr_in *)&addr;
-        inet_ntop(AF_INET, &sockinfo->sin_addr, out_result, INET6_ADDRSTRLEN);
-    } else { // IPv6
-        struct sockaddr_in6 *sockinfo = (struct sockaddr_in6 *)&addr;
-        inet_ntop(AF_INET6, &sockinfo->sin6_addr, out_result, INET6_ADDRSTRLEN);
-    }
-}
 
 void shutdown_operations()
 {
@@ -451,19 +376,6 @@ void shutdown_operations()
         free(tmp);
     }
     free(g_thread_list_head);
-
-#if 0
-    if (0 != remove("/var/tmp/aesdsocketdata"))
-    {
-        fprintf(stderr, "Could not remove /var/tmp/aesdsocketdata\n");
-        syslog(LOG_ERR, "Could not remove /var/tmp/aesdsocketdata");
-    }
-#endif
-
-#if 0
-    _exit(EXIT_SUCCESS);
-    kill(getpid(), SIGKILL);
-#endif
 }
 
 /** Sets up an interval timer for every `every_secs` seconds. And starts the thread to watch
@@ -511,15 +423,15 @@ int main(int argc, char** argv)
     printf("-> Setting up run flag\n");
     int res = init_run_flag();
 
-    printf("-> Setting up signal handler");
-    set_up_signals();
-
     printf("-> Run flag = %d\n", get_run_flag());
     if (res != 0)
     {
         log_error("Could not set up run flag.");
         exit(EXIT_FAILURE);
     }
+
+    printf("-> Setting up signal handler");
+    set_up_signals();
 
     // Open disk file
     printf("-> Opening disk file.\n");
@@ -531,7 +443,7 @@ int main(int argc, char** argv)
         exit(EXIT_FAILURE);
     }
 
-   int sockfd = get_bound_socket(); 
+   int sockfd = get_bound_socket("9000"); 
 
     if (do_daemon_mode)
     {
