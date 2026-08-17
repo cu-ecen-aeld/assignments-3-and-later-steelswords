@@ -98,6 +98,28 @@ void add_thread_to_list(struct ThreadList* head, pthread_t tid)
     SLIST_INSERT_HEAD(head, node, nodes);
 }
 
+void get_thread_name(char dst[], int connection_socket_fd, int connection_number)
+{
+    char connection_socket_fd_tag[5] = {0}; // 3 digits + null term + 1 more for "possible" negative sign
+    char connection_number_tag[5] = {0};
+    if (0 <= connection_socket_fd && connection_socket_fd < 999) {
+        sprintf(connection_socket_fd_tag, "%03d", connection_socket_fd);
+    }
+    else
+    {
+        sprintf(connection_socket_fd_tag, "%3s", "xxx");
+    }
+
+    if (0 <= connection_number && connection_number < 999) {
+        sprintf(connection_number_tag, "%03d", connection_number);
+    }
+    else
+    {
+        sprintf(connection_number_tag, "%3s", "xxx");
+    }
+    snprintf(dst, 16, "CNCTN-%3s-%3s", connection_socket_fd_tag, connection_number_tag);
+}
+
 /** Listens as long as the run flag is operational. When clients connect, this
  * dispatches connection handler threads. */
 void *listen_loop(void *global_server_state)
@@ -176,8 +198,8 @@ void *listen_loop(void *global_server_state)
         state->listen_sockfd = connection_socket_fd;
         state->list_head = g_thread_list_head;
 
-        char thread_name[16] = {0};
-        sprintf(thread_name, "CONCTN%03d-%03d", connection_socket_fd, connection_number);
+        char thread_name[17] = {0};
+        get_thread_name(thread_name, connection_socket_fd, connection_number);
         printf(" * Starting thread %s\n", thread_name);
 
         if (0 != pthread_create(&new_thread_handle, NULL, handle_connection, (void*)state))
