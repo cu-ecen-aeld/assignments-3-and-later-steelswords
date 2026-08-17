@@ -1,8 +1,15 @@
-CC="${CROSS_COMPILE}gcc"
-CXX="${CROSS_COMPILE}g++"
-LINKER="${CROSS_COMPILE}gcc"
-LDFLAGS := -pthread $(LDFLAGS)
-CFLAGS := -g -I. $(CFLAGS) -Wall -Werror -Wpedantic
+ifdef $(CROSS_COMPILE)
+	CC := $(CROSS_COMPILE)gcc
+	CXX := $(CROSS_COMPILE)g++
+	LINKER := $(CROSS_COMPILE)gcc
+else
+	CC ?= gcc
+	CXX ?= g++
+	LINKER ?= gcc
+endif
+
+LDFLAGS ?= -pthread
+CFLAGS ?= -g -I. -Wall -Werror -Wpedantic
 
 OBJDIR := obj
 
@@ -22,7 +29,7 @@ signal_handle.o: signal_handle.c signal_handle.h
 	$(CC) $(CFLAGS) -o $@ -c $^
 
 aesdsocket: $(OBJS)
-	$(CC) -o $@ $(LDFLAGS) $(CFLAGS) $^
+	$(LINKER) -o $@ $(LDFLAGS) $(CFLAGS) $^
 
 .phony: clean
 clean:
