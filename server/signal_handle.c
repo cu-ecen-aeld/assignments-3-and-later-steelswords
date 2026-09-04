@@ -110,7 +110,7 @@ void signal_handler(int signo)
     if (signo == SIGINT || signo == SIGTERM)
     {
         syslog(LOG_WARNING, "Caught signal, exiting");
-        printf("-> Caught signal, exiting.\n");
+        //printf("-> Caught signal, exiting.\n");
         set_run_flag(false);
         //disable_signal_handlers();
         //shutdown_operations();
@@ -118,7 +118,7 @@ void signal_handler(int signo)
     }
     if (signo == SIGALRM)
     {
-        printf("-> High time we had ourselves a timestamp!\n");
+        //printf("-> High time we had ourselves a timestamp!\n");
         atomic_store(_timestamp_due_flag, true);
     }
 

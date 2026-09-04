@@ -131,7 +131,7 @@ void *listen_loop(void *global_server_state)
 
     while (true == get_run_flag())
     {
-        printf("-> Listening for connections on socket.\n");
+        //printf("-> Listening for connections on socket.\n");
         while (true == get_run_flag())
         {
             if (-1 == listen(sockfd, SOMAXCONN))
@@ -174,7 +174,7 @@ void *listen_loop(void *global_server_state)
         }
         if (false == get_run_flag())
         {
-            printf("-> Exiting listen loop.\n");
+            //printf("-> Exiting listen loop.\n");
             close(sockfd);
             return NULL;
         }
@@ -200,7 +200,7 @@ void *listen_loop(void *global_server_state)
 
         char thread_name[17] = {0};
         get_thread_name(thread_name, connection_socket_fd, connection_number);
-        printf(" * Starting thread %s\n", thread_name);
+        //printf(" * Starting thread %s\n", thread_name);
 
         if (0 != pthread_create(&new_thread_handle, NULL, handle_connection, (void*)state))
         {
@@ -220,7 +220,7 @@ void *listen_loop(void *global_server_state)
  * the remaining contents to the beginning of the buffer. Can be called many times on the same  */
 char* extract_token_and_consolidate_buffer(char *buf, size_t len)
 {
-    printf("-> Checking for newlines in received messages.\n");
+    //printf("-> Checking for newlines in received messages.\n");
     for (size_t i = 0; i < len; ++i)
     {
         //printf("%02x ", buf[i]);
@@ -257,18 +257,18 @@ char* extract_token_and_consolidate_buffer(char *buf, size_t len)
 void handle_packet(int sockfd, int diskfd, char* msg, size_t len)
 {
     //printf("-> Handling packet of size %zu: \"%s\"\n", len, msg);
-    printf("-> Handling packet of size %zu\n", len);
-    int this_thread_id = (int)gettid();
-    printf("-> Thread %d awaiting write lock.\n", this_thread_id);
+    //printf("-> Handling packet of size %zu\n", len);
+    //int this_thread_id = (int)gettid();
+    //printf("-> Thread %d awaiting write lock.\n", this_thread_id);
     pthread_mutex_lock(&g_file_mutex);
-    printf("-> Thread %d: acquired write lock. Writing to file and socket.\n",
-            this_thread_id);
+    //printf("-> Thread %d: acquired write lock. Writing to file and socket.\n",
+    //        this_thread_id);
     write_all(diskfd, msg, len);
     char newline[1] = "\n";
     write_all(diskfd, newline, 1);
     spit_file_back_out_to_socket(sockfd, diskfd);
     pthread_mutex_unlock(&g_file_mutex);
-    printf("-> Thread %d: released write lock.\n", this_thread_id);
+    //printf("-> Thread %d: released write lock.\n", this_thread_id);
 }
 
 char* read_until_stop_condition(int sockfd, int diskfd, size_t *len)
@@ -287,14 +287,14 @@ char* read_until_stop_condition(int sockfd, int diskfd, size_t *len)
     while (true)
     {
         n = recv(sockfd, &buf[index], buf_chunk_size, 0);
-        printf(" * Recved %zu bytes\n", n);
+        //printf(" * Recved %zu bytes\n", n);
         if (n == buf_chunk_size)
         {
             index += n;
             // Resize.
             buf = realloc(buf, *len + buf_chunk_size);
             *len += buf_chunk_size;
-            printf("-> Resized buffer to be %zu\n", *len);
+            //printf("-> Resized buffer to be %zu\n", *len);
             if (!buf)
             {
                 log_error("Cannot resize buffer");
@@ -311,7 +311,7 @@ char* read_until_stop_condition(int sockfd, int diskfd, size_t *len)
         else if (n == 0)
         {
             // Socket performed an orderly shutdown.
-            printf("-> Socket shut down in an orderly way.\n");
+            //printf("-> Socket shut down in an orderly way.\n");
             return buf;
         }
         else
@@ -322,7 +322,7 @@ char* read_until_stop_condition(int sockfd, int diskfd, size_t *len)
                 // Resize.
                 buf = realloc(buf, *len + buf_chunk_size);
                 *len += buf_chunk_size;
-                printf("-> Resized buffer to be %zu\n", *len);
+                //printf("-> Resized buffer to be %zu\n", *len);
                 if (!buf)
                 {
                     log_error("Cannot resize buffer");
@@ -357,7 +357,7 @@ void* handle_connection(void *args)
     get_client_ip_address(sockfd, client_ip_address);
 
     syslog(LOG_INFO, "Accepted connection from %s", client_ip_address);
-    printf(" * Accepted connection from %s\n", client_ip_address);
+    //printf(" * Accepted connection from %s\n", client_ip_address);
 
     size_t buf_size = MAX_BUF_SIZE;
 
@@ -368,7 +368,7 @@ void* handle_connection(void *args)
     if (0 == close(sockfd))
     {
         syslog(LOG_INFO, "Closed connection from %s", client_ip_address);
-        printf(" * Closed connection from %s\n", client_ip_address);
+        //printf(" * Closed connection from %s\n", client_ip_address);
     }
     else
     {
@@ -381,10 +381,10 @@ void* handle_connection(void *args)
 
 void shutdown_operations()
 {
-    printf("-> Shutting down.\n");
+    //printf("-> Shutting down.\n");
     set_run_flag(false);
 
-    printf("-> Joining all threads.\n");
+    //printf("-> Joining all threads.\n");
     // Join each thread
     struct ThreadListNode *node = NULL;
     node = SLIST_FIRST(g_thread_list_head);
@@ -437,26 +437,26 @@ int main(int argc, char** argv)
     {
         if (0 == strcmp(argv[1], "-d"))
         {
-            printf(" * -d flag passed in.\n");
+            //printf(" * -d flag passed in.\n");
             do_daemon_mode = true;
         }
     }
 
-    printf("-> Setting up run flag\n");
+    //printf("-> Setting up run flag\n");
     int res = init_run_flag();
 
-    printf("-> Run flag = %d\n", get_run_flag());
+    //printf("-> Run flag = %d\n", get_run_flag());
     if (res != 0)
     {
         log_error("Could not set up run flag.");
         exit(EXIT_FAILURE);
     }
 
-    printf("-> Setting up signal handler");
+    //printf("-> Setting up signal handler");
     set_up_signals();
 
     // Open disk file
-    printf("-> Opening disk file.\n");
+    //printf("-> Opening disk file.\n");
     int file_mode = S_IWGRP | S_IWUSR | S_IRGRP | S_IRUSR;
     int diskfd = open("/var/tmp/aesdsocketdata", O_CREAT | O_APPEND | O_RDWR, file_mode);
     if (diskfd < 0)
@@ -476,7 +476,7 @@ int main(int argc, char** argv)
         }
         else
         {
-            printf("->> DAEMON MODE ACTIVATED\n");
+            //printf("->> DAEMON MODE ACTIVATED\n");
         }
     }
 
@@ -502,14 +502,14 @@ int main(int argc, char** argv)
         usleep(200 * 1000);
     }
 
-    printf("-> Proceeding with shutdown.\n");
+    //printf("-> Proceeding with shutdown.\n");
 
     pthread_join(listen_loop_handle, NULL);
     pthread_join(timestamp_thread_handle, NULL);
 
     shutdown_operations();
 
-    printf("-> Closing socket.\n");
+    //printf("-> Closing socket.\n");
     close(sockfd);
     close(diskfd);
 
@@ -522,5 +522,5 @@ int main(int argc, char** argv)
         log_error("Could not remove /var/tmp/aesdsocketdata");
     }
 
-    printf("-> Exiting.\n");
+    //printf("-> Exiting.\n");
 }
