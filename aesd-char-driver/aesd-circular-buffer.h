@@ -80,7 +80,10 @@ extern void aesd_circular_buffer_init(struct aesd_circular_buffer *buffer);
 
 void aesd_circular_buffer_destroy(struct aesd_circular_buffer *buffer);
 
-struct aesd_buffer_entry *aesd_buffer_entry_init(size_t buffer_size);
+/** Creates and inits an aesd_buffer_entry on the stack, prepped with a
+ * dynamically-allocated buffptr
+ */
+struct aesd_buffer_entry aesd_buffer_entry_init(size_t buffer_size);
 
 
 #endif /* AESD_CIRCULAR_BUFFER_H */

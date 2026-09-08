@@ -275,21 +275,17 @@ void aesd_circular_buffer_destroy(struct aesd_circular_buffer *buffer)
     }
 }
 
-struct aesd_buffer_entry *aesd_buffer_entry_init(size_t buffer_size)
+struct aesd_buffer_entry aesd_buffer_entry_init(size_t buffer_size)
 {
-    struct aesd_buffer_entry *entry = agnostic_zallocate(sizeof(struct aesd_buffer_entry));
-    if (!entry)
-    {
-        PDEBUG("ERROR: Could not allocate aesd_buffer_entry: No memory\n");
-        return NULL;
-    }
-    entry->buffptr = agnostic_zallocate(buffer_size);
-    if (!entry->buffptr)
+    char *buffer = agnostic_zallocate(buffer_size + 1);
+    if (NULL == buffer)
     {
         PDEBUG("ERROR: Could not allocate buffptr in aesd_buffer_entry: No memory.\n");
-        agnostic_free(entry);
-        return NULL;
     }
-    entry->size = buffer_size;
+
+    struct aesd_buffer_entry entry = {
+        .buffptr = buffer,
+        .size = buffer_size,
+    };
     return entry;
 }

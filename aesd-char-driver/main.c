@@ -19,6 +19,7 @@
 #include <linux/cdev.h>
 #include <linux/fs.h> // file_operations
 #include "aesd-circular-buffer.h"
+#include "agnostic_allocate.h"
 #include "aesdchar.h"
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
@@ -66,16 +67,40 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     mutex_lock_interruptible(&aesd_device.lock);
     PDEBUG("%s: acquired lock...\n", __func__);
 
-    struct aesd_buffer_entry *entry = aesd_buffer_entry_init(count);
-    if (NULL == entry)
+    struct aesd_buffer_entry entry = aesd_buffer_entry_init(count);
+    if (NULL == entry.buffptr)
     {
         PDEBUG("ERROR: Could not create aesd_buffer_entry.\n");
         goto aesd_write_cleanup;
     }
-    copy_from_user(aesd_buffer_entry_init, buf, count);
+    copy_from_user(entry.buffptr, buf, count);
+    char* buffer_to_release = aesd_circular_buffer_add_entry(&aesd_device.stored_circular_buffer, &entry);
+    if (NULL != buffer_to_release)
+    {
+        PDEBUG("INFO: %s: Freeing dropped buffer.\n", __func__);
+        agnostic_free(buffer_to_release);
+    }
+
+
+    // TODO: Split on newlines
+#if 0
+    for (size_t i = 0; i < count && entry->buffptr[i] != '\0'; ++i)
+    {
+        if (entry->buffptr[i] == '\n')
+        {
+            PDEBUG("%s: Found newline at count %zu. Splitting write buffer.\n",
+                    __func__, count);
+
+
+        }
+    }
+#endif
+    
 
 aesd_write_cleanup:
     mutex_unlock(&aesd_device.lock);
+    PDEBUG("%s: released lock...\n", __func__);
+
     return retval;
 }
 struct file_operations aesd_fops = {
