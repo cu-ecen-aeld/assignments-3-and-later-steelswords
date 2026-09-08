@@ -8,38 +8,57 @@
  *
  */
 
-#include <stdio.h>
-#include <stdbool.h>
 #ifdef __KERNEL__
 #include <linux/string.h>
+#include <linux/types.h>
+#include <linux/slab.h>
 #else
 #include <string.h>
+#include <stdio.h>
+#include <stdbool.h>
+#include <ctype.h>
 #endif
 
+#include "pdebug.h"
 #include "aesd-circular-buffer.h"
-#include <ctype.h>
 
 static void print_with_escapes(const char* const str, size_t len)
 {
-    for (size_t i = 0; i < len; ++i)
+    const size_t max_dest_buf_size = len * sizeof(char) * 2 + 1; // If every char is '\n' -> doubles
+    char * dest_str =
+#ifdef __KERNEL__
+        kzalloc(max_dest_buf_size, GFP_KERNEL);
+#define isprint(x) ( ' ' <= x && x <= '~' && x != '\n' && x != '\\')
+#else
+        calloc(1, max_dest_buf_size);
+#endif
+    for (size_t dest_i = 0, i = 0; i < len; ++i)
     {
         if (isprint(str[i]))
         {
-            putc(str[i], stdout);
+            dest_str[dest_i++] = str[i];
         }
         else
         {
             switch (str[i])
             {
                 case '\n':
-                    printf("\\n");
+                    dest_str[dest_i++] = '\\';
+                    dest_str[dest_i++] = 'n';
                     break;
                 default:
-                    printf("%02x", (int)(str[i]));
+                    dest_str[dest_i++] = '\\';
+                    dest_str[dest_i++] = '?';
                     break;
             }
         }
     }
+    PDEBUG("%s", dest_str);
+#ifdef __KERNEL__
+    kfree(dest_str);
+#else
+    free(dest_str);
+#endif
 }
 
 /**
@@ -100,7 +119,7 @@ static void print_circular_buffer(struct aesd_circular_buffer *buffer)
     const char *const out_tag          = "    O    ";
     const char *const arrow_stem       = "        ";
     const char *const cell_repr_spaces = "         ";
-    printf(
+    PDEBUG(
 "BUFFER: [full: %s.  in_offs=%u    out_offs=%u ]\n", buffer->full? "Y" : "N",
 (unsigned int)buffer->in_offs, (unsigned int)buffer->out_offs);
     // Print I and O for input/output offsets.
@@ -108,41 +127,41 @@ static void print_circular_buffer(struct aesd_circular_buffer *buffer)
     {
         if (i == buffer->in_offs && i == buffer->out_offs)
         {
-            printf("%s", both_tag);
+            PDEBUG("%s", both_tag);
         }
         else if (i == buffer->in_offs)
         {
-            printf("%s", in_tag);
+            PDEBUG("%s", in_tag);
         }
         else if (i == buffer->out_offs)
         {
-            printf("%s", out_tag);
+            PDEBUG("%s", out_tag);
         }
         else
         {
-            printf("%s", cell_repr_spaces);
+            PDEBUG("%s", cell_repr_spaces);
         }
     }
-    printf("\n");
+    PDEBUG("\n");
     for (size_t i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; ++i)
     {
         if (i == buffer->in_offs || i == buffer->out_offs)
-            printf("%s", arrow_stem); 
+            PDEBUG("%s", arrow_stem); 
         else
-            printf("%s", cell_repr_spaces);
+            PDEBUG("%s", cell_repr_spaces);
     }
-    printf("\n");
+    PDEBUG("\n");
     for (size_t i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; ++i)
     {
-        printf(cell_repr, buffer->entry[i].size);
+        PDEBUG(cell_repr, buffer->entry[i].size);
     }
-    printf("\n");
-    printf("BUFFERS:\n---------\n");
+    PDEBUG("\n");
+    PDEBUG("BUFFERS:\n---------\n");
     for (size_t i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; ++i)
     {
-        printf("[%02zu]: ", i);
+        PDEBUG("[%02zu]: ", i);
         print_with_escapes(buffer->entry[i].buffptr, buffer->entry[i].size);
-        printf("\n");
+        PDEBUG("\n");
     }
 }
 
@@ -158,19 +177,19 @@ void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const s
     // Validate parameters
     if (NULL == buffer || NULL == add_entry)
     {
-        fprintf(stderr, "%s:%d: Error: Cannot accept a NULL parameter.",
+        PDEBUG("%s:%d: Error: Cannot accept a NULL parameter.",
                 __func__, __LINE__);
         return;
     }
     if (add_entry->buffptr == NULL)
     {
-        fprintf(stderr, "%s:%d: Error: Entry to be added has NULL buffer.\n",
+        PDEBUG("%s:%d: Error: Entry to be added has NULL buffer.\n",
                 __func__, __LINE__);
         return;
     }
     if (buffer->out_offs > AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED)
     {
-        fprintf(stderr, "%s:%d: Error: Malformed aesd_circular_buffer. out_offs = %u, but max = %d",
+        PDEBUG("%s:%d: Error: Malformed aesd_circular_buffer. out_offs = %u, but max = %d",
                 __func__, __LINE__,
                 (unsigned int)buffer->out_offs,
                 AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED
@@ -179,7 +198,7 @@ void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const s
     }
     if (buffer->in_offs > AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED)
     {
-        fprintf(stderr, "%s:%d: Error: Malformed aesd_circular_buffer. in_offs = %u, but max = %d",
+        PDEBUG("%s:%d: Error: Malformed aesd_circular_buffer. in_offs = %u, but max = %d",
                 __func__, __LINE__,
                 (unsigned int)buffer->in_offs,
                 AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED
@@ -187,9 +206,9 @@ void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const s
         return;
     }
     
-    printf("===================================================================\n");
-    printf(" Adding entry with size=%zu, buffer=[%s]\n\n", add_entry->size, add_entry->buffptr);
-    printf("Circular Buffer Before adding entry:\n");
+    PDEBUG("===================================================================\n");
+    PDEBUG(" Adding entry with size=%zu, buffer=[%s]\n\n", add_entry->size, add_entry->buffptr);
+    PDEBUG("Circular Buffer Before adding entry:\n");
     print_circular_buffer(buffer);
 
     // Always write at the input offset
@@ -216,9 +235,9 @@ void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const s
         buffer->full = false;
     }
 
-    printf("Circular Buffer After adding entry:\n");
+    PDEBUG("Circular Buffer After adding entry:\n");
     print_circular_buffer(buffer);
-    printf("===================================================================\n");
+    PDEBUG("===================================================================\n");
 }
 
 /**
