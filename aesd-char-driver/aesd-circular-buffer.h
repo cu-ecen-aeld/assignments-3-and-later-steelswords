@@ -78,5 +78,6 @@ extern void aesd_circular_buffer_init(struct aesd_circular_buffer *buffer);
             index++, entryptr=&((buffer)->entry[index]))
 
 
+void aesd_circular_buffer_destroy(struct aesd_circular_buffer *buffer);
 
 #endif /* AESD_CIRCULAR_BUFFER_H */

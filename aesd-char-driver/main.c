@@ -12,6 +12,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/init.h>
 #include <linux/printk.h>
 #include <linux/types.h>
@@ -21,7 +22,7 @@
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
 
-MODULE_AUTHOR("Your Name Here"); /** TODO: fill in your name **/
+MODULE_AUTHOR("Tristan Andrus");
 MODULE_LICENSE("Dual BSD/GPL");
 
 struct aesd_dev aesd_device;
@@ -106,6 +107,10 @@ int aesd_init_module(void)
      * TODO: initialize the AESD specific portion of the device
      */
 
+    mutex_init(&aesd_device.lock);
+    aesd_circular_buffer_init(&aesd_device.stored_circular_buffer);
+    aesd_circular_buffer_init(&aesd_device.receive_circular_buffer);
+
     result = aesd_setup_cdev(&aesd_device);
 
     if( result ) {
@@ -121,14 +126,12 @@ void aesd_cleanup_module(void)
 
     cdev_del(&aesd_device.cdev);
 
-    /**
-     * TODO: cleanup AESD specific poritions here as necessary
-     */
+    // TODO: Check if locks are taken? Cleanup locks?
+    aesd_circular_buffer_destroy(&aesd_device.receive_circular_buffer);
+    aesd_circular_buffer_destroy(&aesd_device.stored_circular_buffer);
 
     unregister_chrdev_region(devno, 1);
 }
-
-
 
 module_init(aesd_init_module);
 module_exit(aesd_cleanup_module);

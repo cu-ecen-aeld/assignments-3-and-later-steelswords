@@ -247,3 +247,24 @@ void aesd_circular_buffer_init(struct aesd_circular_buffer *buffer)
 {
     memset(buffer,0,sizeof(struct aesd_circular_buffer));
 }
+
+void aesd_circular_buffer_destroy(struct aesd_circular_buffer *buffer)
+{
+    if (!buffer)
+    {
+        PDEBUG("WARNING: %s: Cannot deallocate NULL pointer\n", __func__);
+        return;
+    }
+
+    uint8_t index;
+    struct aesd_buffer_entry *entry;
+    AESD_CIRCULAR_BUFFER_FOREACH(entry,buffer,index) {
+#ifdef __KERNEL__
+         kfree(entry->buffptr);
+#else
+         free(entry->buffptr);
+#endif
+    }
+}
+
+
