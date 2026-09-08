@@ -21,17 +21,16 @@
 
 #include "pdebug.h"
 #include "aesd-circular-buffer.h"
+#include "agnostic_allocate.h"
+
+#ifdef __KERNEL__
+#define isprint(ch) ( ' ' <= ch && ch <= '~' && ch != '\n')
+#endif
 
 static void print_with_escapes(const char* const str, size_t len)
 {
     const size_t max_dest_buf_size = len * sizeof(char) * 2 + 1; // If every char is '\n' -> doubles
-    char * dest_str =
-#ifdef __KERNEL__
-        kzalloc(max_dest_buf_size, GFP_KERNEL);
-#define isprint(x) ( ' ' <= x && x <= '~' && x != '\n' && x != '\\')
-#else
-        calloc(1, max_dest_buf_size);
-#endif
+    char * dest_str = agnostic_zallocate(max_dest_buf_size);
     for (size_t dest_i = 0, i = 0; i < len; ++i)
     {
         if (isprint(str[i]))
@@ -54,11 +53,7 @@ static void print_with_escapes(const char* const str, size_t len)
         }
     }
     PDEBUG("%s", dest_str);
-#ifdef __KERNEL__
-    kfree(dest_str);
-#else
-    free(dest_str);
-#endif
+    agnostic_free(dest_str);
 }
 
 /**
@@ -171,21 +166,23 @@ static void print_circular_buffer(struct aesd_circular_buffer *buffer)
 * new start location.
 * Any necessary locking must be handled by the caller
 * Any memory referenced in @param add_entry must be allocated by and/or must have a lifetime managed by the caller.
+* Returns NULL if there is no overwriting. If the oldest pointer is overwritten here, that pointer is returned so the
+* caller may free that buffer.
 */
-void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
+char* aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
 {
     // Validate parameters
     if (NULL == buffer || NULL == add_entry)
     {
         PDEBUG("%s:%d: Error: Cannot accept a NULL parameter.",
                 __func__, __LINE__);
-        return;
+        return NULL;
     }
     if (add_entry->buffptr == NULL)
     {
         PDEBUG("%s:%d: Error: Entry to be added has NULL buffer.\n",
                 __func__, __LINE__);
-        return;
+        return NULL;
     }
     if (buffer->out_offs > AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED)
     {
@@ -194,7 +191,7 @@ void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const s
                 (unsigned int)buffer->out_offs,
                 AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED
                );
-        return;
+        return NULL;
     }
     if (buffer->in_offs > AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED)
     {
@@ -203,13 +200,22 @@ void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const s
                 (unsigned int)buffer->in_offs,
                 AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED
                );
-        return;
+        return NULL;
     }
     
     PDEBUG("===================================================================\n");
     PDEBUG(" Adding entry with size=%zu, buffer=[%s]\n\n", add_entry->size, add_entry->buffptr);
     PDEBUG("Circular Buffer Before adding entry:\n");
     print_circular_buffer(buffer);
+
+    char* overwritten_buffer_ptr = NULL;
+
+    // If we are about to overwrite the oldest entry, save that pointer so we can
+    // return it for the caller to deallocate.
+    if (buffer->full)
+    {
+        overwritten_buffer_ptr = buffer->entry[buffer->in_offs].buffptr;
+    }
 
     // Always write at the input offset
     // If the buffer is full, advance the out_offs, since you want to read the oldest
@@ -238,6 +244,8 @@ void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const s
     PDEBUG("Circular Buffer After adding entry:\n");
     print_circular_buffer(buffer);
     PDEBUG("===================================================================\n");
+
+    return overwritten_buffer_ptr;
 }
 
 /**
@@ -267,4 +275,21 @@ void aesd_circular_buffer_destroy(struct aesd_circular_buffer *buffer)
     }
 }
 
-
+struct aesd_buffer_entry *aesd_buffer_entry_init(size_t buffer_size)
+{
+    struct aesd_buffer_entry *entry = agnostic_zallocate(sizeof(struct aesd_buffer_entry));
+    if (!entry)
+    {
+        PDEBUG("ERROR: Could not allocate aesd_buffer_entry: No memory\n");
+        return NULL;
+    }
+    entry->buffptr = agnostic_zallocate(buffer_size);
+    if (!entry->buffptr)
+    {
+        PDEBUG("ERROR: Could not allocate buffptr in aesd_buffer_entry: No memory.\n");
+        agnostic_free(entry);
+        return NULL;
+    }
+    entry->size = buffer_size;
+    return entry;
+}

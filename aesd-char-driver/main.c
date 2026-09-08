@@ -18,6 +18,7 @@
 #include <linux/types.h>
 #include <linux/cdev.h>
 #include <linux/fs.h> // file_operations
+#include "aesd-circular-buffer.h"
 #include "aesdchar.h"
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
@@ -61,9 +62,20 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 {
     ssize_t retval = -ENOMEM;
     PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
-    /**
-     * TODO: handle write
-     */
+    PDEBUG("%s: acquiring lock...\n", __func__);
+    mutex_lock_interruptible(&aesd_device.lock);
+    PDEBUG("%s: acquired lock...\n", __func__);
+
+    struct aesd_buffer_entry *entry = aesd_buffer_entry_init(count);
+    if (NULL == entry)
+    {
+        PDEBUG("ERROR: Could not create aesd_buffer_entry.\n");
+        goto aesd_write_cleanup;
+    }
+    copy_from_user(aesd_buffer_entry_init, buf, count);
+
+aesd_write_cleanup:
+    mutex_unlock(&aesd_device.lock);
     return retval;
 }
 struct file_operations aesd_fops = {
