@@ -26,6 +26,10 @@
 #include <time.h>
 #include <unistd.h>
 
+#ifndef USE_AESD_CHAR_DEVICE
+#define USE_AESD_CHAR_DEVICE 0
+#endif
+
 struct ThreadListNode {
     pthread_t thread_handle;
     // TODO: Remove
@@ -424,6 +428,26 @@ pthread_t set_up_timestamp_timer(time_t every_secs, GlobalServerState *state)
     return tid;
 }
 
+const char* const get_output_file_name()
+{
+#if USE_AESD_CHAR_DEVICE
+    return "/dev/aesdchar";
+#else
+    return "/var/tmp/aesdsocketdata";
+#endif
+}
+
+int open_output_file()
+{
+    //printf("-> Opening disk file.\n");
+#if USE_AESD_CHAR_DEVICE
+    return open(get_output_file_name(), O_RDWR);
+#else
+    int file_mode = S_IWGRP | S_IWUSR | S_IRGRP | S_IRUSR;
+    return open(get_output_file_name(), O_CREAT | O_APPEND | O_RDWR, file_mode);
+#endif
+}
+
 int main(int argc, char** argv)
 {
     g_thread_list_head = malloc(sizeof(struct ThreadListNode));
@@ -455,10 +479,7 @@ int main(int argc, char** argv)
     //printf("-> Setting up signal handler");
     set_up_signals();
 
-    // Open disk file
-    //printf("-> Opening disk file.\n");
-    int file_mode = S_IWGRP | S_IWUSR | S_IRGRP | S_IRUSR;
-    int diskfd = open("/var/tmp/aesdsocketdata", O_CREAT | O_APPEND | O_RDWR, file_mode);
+    int diskfd = open_output_file();
     if (diskfd < 0)
     {
         log_error("Could not open file for writing");
@@ -486,7 +507,9 @@ int main(int argc, char** argv)
         .list_head = g_thread_list_head,
     };
 
+#if !USE_AESD_CHAR_DEVICE
     pthread_t timestamp_thread_handle = set_up_timestamp_timer(10, &listen_loop_args);
+#endif
 
     pthread_t listen_loop_handle = {0};
     if (0 != pthread_create(&listen_loop_handle, NULL, &listen_loop, (void*)&listen_loop_args))
@@ -505,7 +528,9 @@ int main(int argc, char** argv)
     //printf("-> Proceeding with shutdown.\n");
 
     pthread_join(listen_loop_handle, NULL);
+#if !USE_AESD_CHAR_DEVICE
     pthread_join(timestamp_thread_handle, NULL);
+#endif
 
     shutdown_operations();
 
@@ -517,10 +542,12 @@ int main(int argc, char** argv)
     free(_is_listening_flag);
     free(_timestamp_due_flag);
 
+#if !USE_AESD_CHAR_DEVICE
     if (0 != remove("/var/tmp/aesdsocketdata"))
     {
         log_error("Could not remove /var/tmp/aesdsocketdata");
     }
+#endif
 
     //printf("-> Exiting.\n");
 }
