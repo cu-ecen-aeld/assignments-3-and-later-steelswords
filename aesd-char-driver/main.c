@@ -62,19 +62,39 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
                 loff_t *f_pos)
 {
     ssize_t retval = -ENOMEM;
+    struct aesd_buffer_entry entry;
+    long unwritten_bytes;
+    char* buffer_to_release;
+
     PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
     PDEBUG("%s: acquiring lock...\n", __func__);
-    mutex_lock_interruptible(&aesd_device.lock);
-    PDEBUG("%s: acquired lock...\n", __func__);
+    int lock_result = mutex_lock_interruptible(&aesd_device.lock);
+    if (lock_result == 0)
+    {
+        PDEBUG("%s: acquired lock...\n", __func__);
+    }
+    else
+    {
+        PDEBUG("%s: lock acquisition interrupted.\n", __func__);
+        retval = -EINTR;
+        goto aesd_write_cleanup_no_lock;
+    }
 
-    struct aesd_buffer_entry entry = aesd_buffer_entry_init(count);
+    entry = aesd_buffer_entry_init(count);
     if (NULL == entry.buffptr)
     {
         PDEBUG("ERROR: Could not create aesd_buffer_entry.\n");
+        retval = -ENOENT;
         goto aesd_write_cleanup;
     }
-    copy_from_user(entry.buffptr, buf, count);
-    char* buffer_to_release = aesd_circular_buffer_add_entry(&aesd_device.stored_circular_buffer, &entry);
+    unwritten_bytes = __copy_from_user((void*)entry.buffptr, buf, count);
+    if (unwritten_bytes != 0)
+    {
+        PDEBUG("ERROR: Could not copy all bytes from user buffer\n");
+        retval = -ENOENT;
+    }
+
+    buffer_to_release = aesd_circular_buffer_add_entry(&aesd_device.stored_circular_buffer, &entry);
     if (NULL != buffer_to_release)
     {
         PDEBUG("INFO: %s: Freeing dropped buffer.\n", __func__);
@@ -99,6 +119,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 
 aesd_write_cleanup:
     mutex_unlock(&aesd_device.lock);
+aesd_write_cleanup_no_lock:
     PDEBUG("%s: released lock...\n", __func__);
 
     return retval;

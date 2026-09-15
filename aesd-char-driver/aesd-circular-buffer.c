@@ -29,9 +29,10 @@
 
 static void print_with_escapes(const char* const str, size_t len)
 {
+    size_t dest_i, i;
     const size_t max_dest_buf_size = len * sizeof(char) * 2 + 1; // If every char is '\n' -> doubles
     char * dest_str = agnostic_zallocate(max_dest_buf_size);
-    for (size_t dest_i = 0, i = 0; i < len; ++i)
+    for (dest_i = 0, i = 0; i < len; ++i)
     {
         if (isprint(str[i]))
         {
@@ -76,16 +77,23 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
     size_t accumulated_size = 0;
     // For each entry,
     bool once_flag = true;
-    for (uint8_t i = buffer->out_offs;
+    uint8_t i;
+    for (i = buffer->out_offs;
             (i != buffer->in_offs) || (buffer->full && i == buffer->in_offs && once_flag);
             i = (i + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED)
     {
+        struct aesd_buffer_entry *entry;
         if (buffer->full && buffer->out_offs == buffer->in_offs)
         {
             once_flag = false;
         }
 
-        struct aesd_buffer_entry *entry = &buffer->entry[i];
+        entry = &buffer->entry[i];
+        if (entry == NULL)
+        {
+            PDEBUG("WARN: No entry found at index %zu.\n", i);
+            continue;
+        }
         // If this entry is too small to cover what we need,
         if (char_offset + 1 <= accumulated_size + entry->size)
         {
@@ -100,59 +108,67 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
             // add entry's length to current_offset
             accumulated_size += entry->size;
         }
-        
     }
 
     return result;
 }
 
+
+#define AESD_CIRCULAR_BUFFER_CELL_REPR (" [ %3zu ] ")
+#define AESD_CIRCULAR_BUFFER_BOTH_TAG  ("    B    ")
+#define AESD_CIRCULAR_BUFFER_IN_TAG    ("    I    ")
+#define AESD_CIRCULAR_BUFFER_OUT_TAG   ("    O    ")
+#define AESD_CIRCULAR_BUFFER_ARROW     ("        ")
+#define AESD_CIRCULAR_BUFFER_CELL_SPACES ("         ")
+
+
+
+
+
+
+
 static void print_circular_buffer(struct aesd_circular_buffer *buffer)
 {
-    const char *const cell_repr        = " [ %3zu ] ";
-    const char *const both_tag         = "    B    ";
-    const char *const in_tag           = "    I    ";
-    const char *const out_tag          = "    O    ";
-    const char *const arrow_stem       = "        ";
-    const char *const cell_repr_spaces = "         ";
+    size_t i;
     PDEBUG(
 "BUFFER: [full: %s.  in_offs=%u    out_offs=%u ]\n", buffer->full? "Y" : "N",
 (unsigned int)buffer->in_offs, (unsigned int)buffer->out_offs);
     // Print I and O for input/output offsets.
-    for (size_t i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; ++i)
+    for (i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; ++i)
     {
         if (i == buffer->in_offs && i == buffer->out_offs)
         {
-            PDEBUG("%s", both_tag);
+            PDEBUG(AESD_CIRCULAR_BUFFER_BOTH_TAG);
         }
         else if (i == buffer->in_offs)
         {
-            PDEBUG("%s", in_tag);
+            PDEBUG(AESD_CIRCULAR_BUFFER_IN_TAG);
         }
         else if (i == buffer->out_offs)
         {
-            PDEBUG("%s", out_tag);
+            PDEBUG(AESD_CIRCULAR_BUFFER_OUT_TAG);
         }
         else
         {
-            PDEBUG("%s", cell_repr_spaces);
+            PDEBUG(AESD_CIRCULAR_BUFFER_CELL_SPACES);
         }
     }
     PDEBUG("\n");
-    for (size_t i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; ++i)
+    for (i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; ++i)
     {
         if (i == buffer->in_offs || i == buffer->out_offs)
-            PDEBUG("%s", arrow_stem); 
+            PDEBUG(AESD_CIRCULAR_BUFFER_ARROW); 
         else
-            PDEBUG("%s", cell_repr_spaces);
+            PDEBUG(AESD_CIRCULAR_BUFFER_CELL_SPACES);
     }
     PDEBUG("\n");
-    for (size_t i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; ++i)
+    for (i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; ++i)
     {
-        PDEBUG(cell_repr, buffer->entry[i].size);
+        PDEBUG(AESD_CIRCULAR_BUFFER_CELL_REPR, buffer->entry[i].size);
     }
     PDEBUG("\n");
     PDEBUG("BUFFERS:\n---------\n");
-    for (size_t i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; ++i)
+    for (i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; ++i)
     {
         PDEBUG("[%02zu]: ", i);
         print_with_escapes(buffer->entry[i].buffptr, buffer->entry[i].size);
@@ -171,6 +187,8 @@ static void print_circular_buffer(struct aesd_circular_buffer *buffer)
 */
 char* aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
 {
+    char* overwritten_buffer_ptr;
+
     // Validate parameters
     if (NULL == buffer || NULL == add_entry)
     {
@@ -208,13 +226,11 @@ char* aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const 
     PDEBUG("Circular Buffer Before adding entry:\n");
     print_circular_buffer(buffer);
 
-    char* overwritten_buffer_ptr = NULL;
-
     // If we are about to overwrite the oldest entry, save that pointer so we can
     // return it for the caller to deallocate.
     if (buffer->full)
     {
-        overwritten_buffer_ptr = buffer->entry[buffer->in_offs].buffptr;
+        overwritten_buffer_ptr = (char*)buffer->entry[buffer->in_offs].buffptr;
     }
 
     // Always write at the input offset
@@ -258,14 +274,15 @@ void aesd_circular_buffer_init(struct aesd_circular_buffer *buffer)
 
 void aesd_circular_buffer_destroy(struct aesd_circular_buffer *buffer)
 {
+    uint8_t index;
+    struct aesd_buffer_entry *entry;
+
     if (!buffer)
     {
         PDEBUG("WARNING: %s: Cannot deallocate NULL pointer\n", __func__);
         return;
     }
 
-    uint8_t index;
-    struct aesd_buffer_entry *entry;
     AESD_CIRCULAR_BUFFER_FOREACH(entry,buffer,index) {
 #ifdef __KERNEL__
          kfree(entry->buffptr);
@@ -277,15 +294,15 @@ void aesd_circular_buffer_destroy(struct aesd_circular_buffer *buffer)
 
 struct aesd_buffer_entry aesd_buffer_entry_init(size_t buffer_size)
 {
-    char *buffer = agnostic_zallocate(buffer_size + 1);
+    char *buffer;
+    struct aesd_buffer_entry entry;
+    buffer = agnostic_zallocate(buffer_size + 1);
     if (NULL == buffer)
     {
         PDEBUG("ERROR: Could not allocate buffptr in aesd_buffer_entry: No memory.\n");
     }
 
-    struct aesd_buffer_entry entry = {
-        .buffptr = buffer,
-        .size = buffer_size,
-    };
+    entry.buffptr = buffer;
+    entry.size = buffer_size;
     return entry;
 }
